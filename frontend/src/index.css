@@ -1,0 +1,91 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI", "Roboto", system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #f5f7fb;
+  color: #1c2333;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.app__header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 2rem;
+}
+
+.app__header p {
+  margin: 0 0 1.5rem;
+  color: #5a6478;
+}
+
+.status-card {
+  background: #ffffff;
+  border: 1px solid #dfe4ee;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 1px 3px rgb(28 35 51 / 8%);
+}
+
+.status-card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+}
+
+.status-card__error {
+  color: #b3261e;
+}
+
+.status-card button {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 8px;
+  background: #3452d9;
+  color: #ffffff;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.status-card button:disabled {
+  background: #9aa6c4;
+  cursor: wait;
+}
+
+code {
+  background: #eef1f7;
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #14181f;
+    color: #e6e9f0;
+  }
+
+  .status-card {
+    background: #1d222c;
+    border-color: #2c3342;
+  }
+
+  .app__header p {
+    color: #9aa4b8;
+  }
+
+  code {
+    background: #262c39;
+  }
+}
