@@ -30,6 +30,7 @@ node_modules/
 frontend/dist/
 .vite/
 *.local
+frontend/tsconfig.tsbuildinfo
 
 # --- Logs ---
 *.log
