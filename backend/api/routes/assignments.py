@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/assignments", tags=["assignments"])
 
 
 @router.post(
-    "/",
+    "",
     response_model=AssignmentResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Создать назначение",
@@ -39,7 +39,7 @@ async def create_assignment(
     return AssignmentResponse.model_validate(assignment)
 
 
-@router.get("/", response_model=list[AssignmentResponse], summary="Список назначений")
+@router.get("", response_model=list[AssignmentResponse], summary="Список назначений")
 async def list_assignments(
     task_id: uuid.UUID | None = Query(default=None, description="Фильтр по задаче"),
     resource_id: uuid.UUID | None = Query(default=None, description="Фильтр по ресурсу"),
