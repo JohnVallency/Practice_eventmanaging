@@ -23,7 +23,14 @@ class Resource(Base):
     event = relationship("Event", back_populates="resources")
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     type: Mapped[ResourceType] = mapped_column(
-        SAEnum(ResourceType, native_enum=True, name="resource_type", validate_strings=True),
+        SAEnum(
+            ResourceType,
+            native_enum=True,
+            name="resource_type",
+            validate_strings=True,
+            # Метки ENUM в БД = значения ("human"), а не имена ("HUMAN").
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
         nullable=False,
     )
     availability_per_day: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)

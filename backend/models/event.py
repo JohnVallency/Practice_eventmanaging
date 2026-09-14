@@ -21,7 +21,15 @@ class Event(Base):
     start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[EventStatus] = mapped_column(
-        SAEnum(EventStatus, native_enum=True, name="event_status", validate_strings=True),
+        SAEnum(
+            EventStatus,
+            native_enum=True,
+            name="event_status",
+            validate_strings=True,
+            # Метки ENUM в БД = значения ("draft"), а не имена ("DRAFT"),
+            # иначе server_default='draft' невалиден для типа event_status.
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
         default=EventStatus.DRAFT,
         server_default=EventStatus.DRAFT.value,
         nullable=False,

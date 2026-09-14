@@ -21,7 +21,15 @@ class TaskDependency(Base):
         ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
     )
     dependency_type: Mapped[DependencyType] = mapped_column(
-        SAEnum(DependencyType, native_enum=True, name="dependency_type", validate_strings=True),
+        SAEnum(
+            DependencyType,
+            native_enum=True,
+            name="dependency_type",
+            validate_strings=True,
+            # Метки ENUM в БД = значения ("FS"), а не имена элементов,
+            # для единообразия с event_status и resource_type.
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
         default=DependencyType.FS,
         server_default=DependencyType.FS.value,
         nullable=False,
