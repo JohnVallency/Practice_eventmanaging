@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/events", tags=["events"])
 
 
 @router.post(
-    "/",
+    "",
     response_model=EventResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Создать событие",
@@ -39,7 +39,7 @@ async def create_event(
     return EventResponse.model_validate(event)
 
 
-@router.get("/", response_model=list[EventResponse], summary="Список событий")
+@router.get("", response_model=list[EventResponse], summary="Список событий")
 async def list_events(
     skip: int = Query(default=0, ge=0, description="Сколько записей пропустить"),
     limit: int = Query(default=50, ge=1, le=100, description="Размер страницы"),
