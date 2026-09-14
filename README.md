@@ -16,6 +16,7 @@ MVP: планирование событий на DAG-графе зависим�
 
 ```bash
 docker compose up --build
+docker compose exec backend alembic upgrade head   # применить миграции БД
 ```
 
 | Сервис | URL |
