@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Any
 import uuid
 
-from sqlalchemy import coalesce, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import ConflictError, ResourceNotFound, ValidationError
@@ -46,7 +46,7 @@ class AssignmentService:
         Returns:
             Decimal: сумма units_allocated по назначениям ресурса; 0, если их нет.
         """
-        load_expr = coalesce(func.sum(Assignment.units_allocated), 0)
+        load_expr = func.coalesce(func.sum(Assignment.units_allocated), 0)
         stmt = select(load_expr).where(Assignment.resource_id == resource_id)
         if exclude_assignment_id is not None:
             stmt = stmt.where(Assignment.id != exclude_assignment_id)
