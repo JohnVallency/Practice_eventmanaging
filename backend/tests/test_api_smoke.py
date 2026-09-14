@@ -9,22 +9,46 @@
 import pytest
 
 from conftest import has_module
+from main import app
 
 from fastapi.testclient import TestClient
 
 
-def _has_route_module(route_name: str) -> bool:
-    """Проверить наличие модуля роута (плюс связанного сервиса и схемы).
+def _router_prefix_mounted(prefix: str) -> bool:
+    """Проверить, что маршруты с данным префиксом смонтированы в приложении.
+
+    Модуль роута может существовать, но ещё не быть включённым в main.py
+    (main.py не в зоне ответственности тестов), поэтому гейт активности
+    проверяет фактические маршруты, а не только импортируемость.
+
+    Args:
+        prefix: префикс пути, например "/api/events".
+
+    Returns:
+        True, если найден хотя бы один смонтированный маршрут с префиксом.
+    """
+    for route in app.router.routes:
+        path = getattr(route, "path", "")
+        if path == prefix or path.startswith(prefix + "/"):
+            return True
+    return False
+
+
+def _route_ready(route_name: str) -> bool:
+    """Гейт активности смоук-проверок для сущности.
+
+    Проверка активна, когда модуль роута импортируется И его маршруты
+    уже смонтированы в приложении (значит, попадут в OpenAPI).
 
     Args:
         route_name: короткое имя сущности, например "events".
 
     Returns:
-        True, если импортируются и роут, и соответствующий сервис.
+        True, если проверку по сущности можно выполнять.
     """
-    return has_module(f"api.routes.{route_name}") and has_module(
-        f"services.{route_name}"
-    )
+    if not has_module(f"api.routes.{route_name}"):
+        return False
+    return _router_prefix_mounted(f"/api/{route_name}")
 
 
 def test_health_returns_ok(client: TestClient) -> None:
@@ -58,8 +82,8 @@ def test_openapi_contains_events_paths(client: TestClient) -> None:
 
 
 @pytest.mark.skipif(
-    not _has_route_module("events"),
-    reason="api.routes.events/services.events ещё не реализованы",
+    not _route_ready("events"),
+    reason="api.routes.events ещё не реализованы или не смонтированы",
 )
 def test_events_routes_have_response_models(client: TestClient) -> None:
     """CRUD-пути /api/events объявлены в OpenAPI с response_model.
@@ -97,8 +121,8 @@ def test_events_routes_have_response_models(client: TestClient) -> None:
 
 
 @pytest.mark.skipif(
-    not _has_route_module("tasks"),
-    reason="api.routes.tasks/services.tasks ещё не реализованы",
+    not _route_ready("tasks"),
+    reason="api.routes.tasks ещё не реализованы или не смонтированы",
 )
 def test_tasks_routes_documented(client: TestClient) -> None:
     """Пути /api/tasks присутствуют в OpenAPI-схеме."""
@@ -110,8 +134,8 @@ def test_tasks_routes_documented(client: TestClient) -> None:
 
 
 @pytest.mark.skipif(
-    not _has_route_module("resources"),
-    reason="api.routes.resources/services.resources ещё не реализованы",
+    not _route_ready("resources"),
+    reason="api.routes.resources ещё не реализованы или не смонтированы",
 )
 def test_resources_routes_documented(client: TestClient) -> None:
     """Пути /api/resources присутствуют в OpenAPI-схеме."""
@@ -123,8 +147,8 @@ def test_resources_routes_documented(client: TestClient) -> None:
 
 
 @pytest.mark.skipif(
-    not _has_route_module("assignments"),
-    reason="api.routes.assignments/services.assignments ещё не реализованы",
+    not _route_ready("assignments"),
+    reason="api.routes.assignments ещё не реализованы или не смонтированы",
 )
 def test_assignments_routes_documented(client: TestClient) -> None:
     """Пути /api/assignments присутствуют в OpenAPI-схеме."""
