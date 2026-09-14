@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/resources", tags=["resources"])
 
 
 @router.post(
-    "/",
+    "",
     response_model=ResourceResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Создать ресурс",
@@ -39,7 +39,7 @@ async def create_resource(
     return ResourceResponse.model_validate(resource)
 
 
-@router.get("/", response_model=list[ResourceResponse], summary="Список ресурсов")
+@router.get("", response_model=list[ResourceResponse], summary="Список ресурсов")
 async def list_resources(
     event_id: uuid.UUID | None = Query(default=None, description="Фильтр по событию"),
     skip: int = Query(default=0, ge=0, description="Сколько записей пропустить"),
