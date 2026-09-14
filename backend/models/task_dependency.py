@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import CheckConstraint, Enum as SAEnum, ForeignKey, Integer
+from sqlalchemy import CheckConstraint, Enum as SAEnum, ForeignKey, Integer, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import Base
