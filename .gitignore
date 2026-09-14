@@ -49,6 +49,9 @@ desktop.ini
 # --- Docker ---
 docker-compose.override.yml
 
+# --- AgentTeams internal state ---
+.agent-teams/
+
 # --- Alembic ---
 backend/alembic/versions/*.py
 !backend/alembic/versions/.gitkeep
