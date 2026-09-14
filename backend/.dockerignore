@@ -9,6 +9,5 @@ venv/
 .mypy_cache/
 .ruff_cache/
 tests/
-alembic/versions/*.py
 Dockerfile
 .dockerignore
