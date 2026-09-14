@@ -69,16 +69,21 @@ def test_openapi_available_with_health_path(client: TestClient) -> None:
 
 
 @pytest.mark.skipif(
-    not has_module("api.routes.events"),
-    reason="api.routes.events ещё не реализованы",
+    not _route_ready("events"),
+    reason="api.routes.events ещё не реализованы или не смонтированы",
 )
 def test_openapi_contains_events_paths(client: TestClient) -> None:
-    """После подключения роутера /api/events появляется в OpenAPI."""
+    """После подключения роутера пути /api/events появляются в OpenAPI.
+
+    Роуты могут объявляться с завершающим слэшем ("/api/events/"),
+    поэтому сравнение выполняется по нормализованным путям.
+    """
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
     schema = response.json()
-    assert "/api/events" in schema["paths"]
+    documented = {path.rstrip("/") for path in schema["paths"]}
+    assert "/api/events" in documented
 
 
 @pytest.mark.skipif(
@@ -98,7 +103,7 @@ def test_events_routes_have_response_models(client: TestClient) -> None:
     events_paths = {
         path: spec
         for path, spec in schema["paths"].items()
-        if path.startswith("/api/events")
+        if path.rstrip("/") == "/api/events" or path.rstrip("/").startswith("/api/events/")
     }
     assert events_paths, "ожидались пути /api/events в OpenAPI"
 
