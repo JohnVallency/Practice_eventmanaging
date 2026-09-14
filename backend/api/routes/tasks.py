@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
 @router.post(
-    "/",
+    "",
     response_model=TaskResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Создать задачу",
@@ -45,7 +45,7 @@ async def create_task(
     return TaskResponse.model_validate(task)
 
 
-@router.get("/", response_model=list[TaskResponse], summary="Список задач")
+@router.get("", response_model=list[TaskResponse], summary="Список задач")
 async def list_tasks(
     event_id: uuid.UUID | None = Query(default=None, description="Фильтр по событию"),
     skip: int = Query(default=0, ge=0, description="Сколько записей пропустить"),
