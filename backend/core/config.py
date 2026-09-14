@@ -5,9 +5,10 @@
 """
 
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -34,9 +35,24 @@ class Settings(BaseSettings):
     database_url: str | None = Field(default=None)
 
     # --- CORS ---
-    cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
     )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> object:
+        """Принимать CORS_ORIGINS как JSON-массив или строку через запятую.
+
+        Args:
+            value: исходное значение из окружения или .env.
+
+        Returns:
+            Список origin-ов, если значение было строкой с запятыми.
+        """
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     def build_database_url(self) -> str:
         """Собрать DSN для async SQLAlchemy.
