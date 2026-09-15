@@ -1,4 +1,4 @@
-"""Сервисный слой расчёта расписания события (прямой проход CPM).
+"""Сервисный слой расчёта расписания события (полный CPM).
 
 Схема транзакций единая со всеми сервисами: методы работают внутри сессии
 из зависимости ``get_session``; коммит выполняет сам ``get_session`` после
@@ -18,17 +18,23 @@ from sqlalchemy.orm import aliased
 from core.exceptions import ValidationError
 from models import Task, TaskDependency
 from services.event_service import EventService
-from services.scheduling import CyclicDependencyError, calculate_forward_pass
+from services.scheduling import (
+    CyclicDependencyError,
+    calculate_backward_pass,
+    calculate_floats,
+    calculate_forward_pass,
+    identify_critical_path,
+)
 
 
 class ScheduleService:
-    """Расчёт ранних дат задач события методом критического пути."""
+    """Расчёт расписания задач события методом критического пути (CPM)."""
 
     @staticmethod
     async def calculate_event_schedule(
         session: AsyncSession, event_id: uuid.UUID
     ) -> dict[str, object]:
-        """Рассчитать и сохранить ранние даты всех задач события.
+        """Рассчитать и сохранить полный CPM-результат всех задач события.
 
         Шаги:
         1. Проверить, что событие существует (404 обеспечивает
@@ -38,17 +44,22 @@ class ScheduleService:
            последователь) принадлежат этому событию.
         4. Выполнить прямой проход CPM (топологическая сортировка + расчёт
            ES/EF); цикл зависимостей -> ValidationError("Cycle detected").
-        5. Bulk-обновить поля ``earliest_start``/``earliest_finish`` одним
-           ORM-UPDATE и отправить изменения через ``session.flush()``.
+        5. Определить длительность проекта как максимум EF, выполнить
+           обратный проход (LS/LF), рассчитать резервы (total/free float)
+           и критический путь.
+        6. Bulk-обновить поля дат и резервов одним ORM-UPDATE и отправить
+           изменения через ``session.flush()``.
 
         Args:
             session: активная сессия SQLAlchemy.
             event_id: UUID события.
 
         Returns:
-            dict: {"event_id": str, "calculated": int,
-            "schedule": {task_id: {"earliest_start": int,
-            "earliest_finish": int}}}.
+            dict: {"event_id": str, "calculated": int, "schedule": {task_id:
+            {"earliest_start", "earliest_finish", "latest_start",
+            "latest_finish", "total_float", "free_float", "is_critical"}},
+            "critical_path": [task_id в топологическом порядке],
+            "project_duration": int}.
 
         Raises:
             ResourceNotFound: если события с таким UUID нет.
@@ -86,14 +97,34 @@ class ScheduleService:
         except CyclicDependencyError as exc:
             raise ValidationError("Cycle detected") from exc
 
-        # 5. Bulk-обновление ранних дат одним ORM-UPDATE по набору параметров.
+        # 5. Обратный проход, резервы и критический путь.
+        # Длительность проекта — максимум EF (задачи гарантированно не пусты).
+        project_duration = max(
+            values["earliest_finish"] for values in forward.values()
+        )
+        backward = calculate_backward_pass(tasks, dependencies, project_duration)
+        floats = calculate_floats(tasks, dependencies, forward, backward)
+        total_floats = {
+            tid: values["total_float"] for tid, values in floats.items()
+        }
+        critical_path: list[uuid.UUID] = identify_critical_path(
+            tasks, total_floats
+        )
+        critical_ids: set[uuid.UUID] = set(critical_path)
+
+        # 6. Bulk-обновление дат и резервов одним ORM-UPDATE по набору параметров.
         payload = [
             {
                 "id": tid,
-                "earliest_start": values["earliest_start"],
-                "earliest_finish": values["earliest_finish"],
+                "earliest_start": forward[tid]["earliest_start"],
+                "earliest_finish": forward[tid]["earliest_finish"],
+                "latest_start": backward[tid]["latest_start"],
+                "latest_finish": backward[tid]["latest_finish"],
+                "total_float": floats[tid]["total_float"],
+                "free_float": floats[tid]["free_float"],
+                "is_critical": tid in critical_ids,
             }
-            for tid, values in forward.items()
+            for tid in forward
         ]
         if payload:
             await session.execute(sa_update(Task), payload)
@@ -104,9 +135,16 @@ class ScheduleService:
             "calculated": len(tasks),
             "schedule": {
                 str(tid): {
-                    "earliest_start": values["earliest_start"],
-                    "earliest_finish": values["earliest_finish"],
+                    "earliest_start": forward[tid]["earliest_start"],
+                    "earliest_finish": forward[tid]["earliest_finish"],
+                    "latest_start": backward[tid]["latest_start"],
+                    "latest_finish": backward[tid]["latest_finish"],
+                    "total_float": floats[tid]["total_float"],
+                    "free_float": floats[tid]["free_float"],
+                    "is_critical": tid in critical_ids,
                 }
-                for tid, values in forward.items()
+                for tid in forward
             },
+            "critical_path": [str(tid) for tid in critical_path],
+            "project_duration": int(project_duration),
         }
