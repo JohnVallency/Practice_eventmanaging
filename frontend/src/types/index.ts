@@ -1,7 +1,53 @@
 /**
- * Общие типы фронтенда EventLMS.
- * Контракты повторяют схемы Pydantic бэкенда (schemas/health.py).
+ * Barrel-реэкспорт типов фронтенда EventLMS.
+ * Контракты повторяют схемы Pydantic бэкенда (backend/schemas/*.py).
  */
+
+export type {
+  Event,
+  EventCreate,
+  EventStatus,
+  EventUpdate,
+} from "./event";
+
+export type {
+  DependencyType,
+  Task,
+  TaskCreate,
+  TaskDependency,
+  TaskDependencyCreate,
+  TaskUpdate,
+} from "./task";
+
+export type {
+  Assignment,
+  AssignmentCreate,
+  AssignmentUpdate,
+  Resource,
+  ResourceCreate,
+  ResourceType,
+  ResourceUpdate,
+} from "./resource";
+
+export type {
+  BudgetSummaryResponse,
+  Expense,
+  ExpenseCreate,
+  MapCenter,
+  MapResponse,
+  NotificationItem,
+  NotificationResponse,
+  ResourceScheduleItem,
+  ResourceScheduleResponse,
+  ResourceUtilization,
+  ResourceUtilizationResponse,
+  ScheduleCalculationResponse,
+  ScheduleItem,
+  Venue,
+  VenueCreate,
+} from "./schedule";
+
+/* ------------------------ Прочие общие типы UI --------------------------- */
 
 export interface HealthResponse {
   status: string;
