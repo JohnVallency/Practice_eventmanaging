@@ -1,55 +1,48 @@
-# --- Python ---
+```
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Editors
+.vscode/
+.idea/
+
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+*.pyo
+*.pyd
 .Python
-.venv/
 venv/
+.venv/
 env/
 ENV/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
 .coverage
 htmlcov/
-*.egg-info/
-build/
-dist/
+.coverage.*
+.nyc_output/
+istanbul/
+coverage-final.json
 
-# --- Environment ---
-.env
-.env.*
-!.env.example
-backend/.env
-backend/.env.*
-!backend/.env.example
-
-# --- Node / Frontend ---
-node_modules/
-frontend/dist/
-.vite/
-*.local
-frontend/tsconfig.tsbuildinfo
-
-# --- Logs ---
-*.log
-logs/
-
-# --- IDE ---
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# --- OS ---
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
-desktop.ini
-
-# --- Docker ---
-docker-compose.override.yml
-
-# --- AgentTeams internal state ---
-.agent-teams/
-
+```

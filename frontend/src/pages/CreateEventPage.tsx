@@ -1,5 +1,5 @@
 /**
- * Страница создания события /events/new — форма в карточке.
+ * Страница создания события /events/new — форма в карточке с расширенными настройками.
  */
 
 import { useState, type FormEvent } from "react";
@@ -16,14 +16,33 @@ interface FormState {
   startDate: string;
   endDate: string;
   budget: string;
+  status: string;
+  description: string;
+  location: string;
+  organizerName: string;
+  organizerContact: string;
+  maxParticipants: string;
 }
 
-const INITIAL: FormState = { name: "", startDate: "", endDate: "", budget: "" };
+const INITIAL: FormState = { 
+  name: "", 
+  startDate: "", 
+  endDate: "", 
+  budget: "", 
+  status: "draft",
+  description: "",
+  location: "",
+  organizerName: "",
+  organizerContact: "",
+  maxParticipants: ""
+};
 
 interface ValidationErrors {
   name?: string;
   startDate?: string;
   endDate?: string;
+  budget?: string;
+  maxParticipants?: string;
 }
 
 function validate(form: FormState): ValidationErrors {
@@ -39,8 +58,21 @@ function validate(form: FormState): ValidationErrors {
   } else if (form.startDate !== "" && form.endDate <= form.startDate) {
     errors.endDate = "Дата окончания должна быть позже даты начала";
   }
+  if (form.budget.trim() !== "" && (isNaN(Number(form.budget)) || Number(form.budget) < 0)) {
+    errors.budget = "Бюджет должен быть неотрицательным числом";
+  }
+  if (form.maxParticipants.trim() !== "" && (isNaN(Number(form.maxParticipants)) || Number(form.maxParticipants) < 0)) {
+    errors.maxParticipants = "Максимальное количество участников должно быть неотрицательным числом";
+  }
   return errors;
 }
+
+const STATUS_OPTIONS = [
+  { value: "draft", label: "📝 Черновик" },
+  { value: "active", label: "🔥 Активно" },
+  { value: "completed", label: "✅ Завершено" },
+  { value: "archived", label: "🗄️ Архив" },
+];
 
 export default function CreateEventPage() {
   const [form, setForm] = useState<FormState>(INITIAL);
@@ -124,6 +156,65 @@ export default function CreateEventPage() {
             hint="Необязательно. По умолчанию 0.00"
             value={form.budget}
             onChange={(e) => patch({ budget: e.target.value })}
+          />
+
+          <div className="field">
+            <label className="field__label">Статус события</label>
+            <select
+              className="field__input"
+              value={form.status}
+              onChange={(e) => patch({ status: e.target.value })}
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field field--textarea">
+            <label className="field__label" htmlFor="description">Описание события</label>
+            <textarea
+              id="description"
+              className="field__input"
+              rows={4}
+              placeholder="Расскажите подробнее о событии: цели, аудитория, ключевые моменты..."
+              value={form.description}
+              onChange={(e) => patch({ description: e.target.value })}
+            />
+          </div>
+
+          <Field
+            label="Место проведения"
+            value={form.location}
+            onChange={(e) => patch({ location: e.target.value })}
+            placeholder="Например: Москва, Конгресс-центр Экспо"
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <Field
+              label="Организатор (имя)"
+              value={form.organizerName}
+              onChange={(e) => patch({ organizerName: e.target.value })}
+              placeholder="Имя контактного лица"
+            />
+            <Field
+              label="Контакты организатора"
+              value={form.organizerContact}
+              onChange={(e) => patch({ organizerContact: e.target.value })}
+              placeholder="Email или телефон"
+            />
+          </div>
+
+          <Field
+            label="Максимальное количество участников"
+            type="number"
+            min="0"
+            step="1"
+            value={form.maxParticipants}
+            onChange={(e) => patch({ maxParticipants: e.target.value })}
+            hint="Оставьте пустым, если ограничений нет"
           />
 
           {serverError && <p className="danger-text">{serverError}</p>}
