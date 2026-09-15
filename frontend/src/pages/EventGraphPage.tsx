@@ -1,8 +1,3 @@
-/**
- * Страница визуализации графа задач /events/:id/graph (SVG, без библиотек).
- * Слои по наибольшему пути от источников, bezier-рёбра, панель выбранного узла.
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -13,21 +8,11 @@ import { Badge, Button, EmptyState, Skeleton, Spinner, useToast } from "../compo
 
 /* --------------------------- Геометрия графа ------------------------------ */
 
-const NODE_W = 168;
-const NODE_H = 44;
-const GAP_X = 56;
-const GAP_Y = 24;
-const PADDING = 24;
-
-const COLOR_EDGE = "#D1D5DB";
-const COLOR_EDGE_CRITICAL = "#DC2626";
-const COLOR_LABEL = "#6B7280";
-const COLOR_NODE_FILL = "#FFFFFF";
-const COLOR_NODE_STROKE = "#E7E5E0";
-const COLOR_CRITICAL_FILL = "#FEF2F2";
-const COLOR_CRITICAL_STROKE = "#DC2626";
-const COLOR_NODE_TEXT = "#1F2937";
-const COLOR_SELECTED = "#111827";
+const NODE_W = 240;
+const NODE_H = 120;
+const GAP_X = 80;
+const GAP_Y = 32;
+const PADDING = 32;
 
 interface GraphNode {
   task: Task;
@@ -56,11 +41,6 @@ function formatDay(value: number | null): string {
   return value === null ? "—" : `день ${value}`;
 }
 
-/** Обрезка имени до 18 символов с многоточием. */
-function truncateName(name: string): string {
-  return name.length > 18 ? `${name.slice(0, 17)}…` : name;
-}
-
 export default function EventGraphPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -76,6 +56,7 @@ export default function EventGraphPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [calcBusy, setCalcBusy] = useState(false);
+  const [zoom, setZoom] = useState(1);
 
   const tasksToGraph = useCallback((): Promise<{ tasks: Task[]; deps: TaskDependency[] }> => {
     if (!id) {
@@ -114,7 +95,6 @@ export default function EventGraphPage() {
     }
     const taskById = new Map(tasks.map((task) => [task.id, task] as const));
 
-    // Списки предшественников и последователей (уникальные пары).
     const predecessors = new Map<string, string[]>();
     const successors = new Map<string, string[]>();
     const seen = new Set<string>();
@@ -135,14 +115,12 @@ export default function EventGraphPage() {
       successors.set(dep.predecessor_id, succs);
     }
 
-    // Слой = наибольший путь от источника: memoized DFS по successor-грани.
     const layerCache = new Map<string, number>();
     const layerOf = (taskId: string): number => {
       const cached = layerCache.get(taskId);
       if (cached !== undefined) {
         return cached;
       }
-      // Временная метка защищает от цикла в данных (бэкенд циклы отклоняет).
       layerCache.set(taskId, 0);
       const preds = predecessors.get(taskId) ?? [];
       let layer = 0;
@@ -156,7 +134,6 @@ export default function EventGraphPage() {
       layerOf(task.id);
     }
 
-    // Узлы: группировка по слоям, сортировка по имени внутри слоя.
     const byLayer = new Map<number, Task[]>();
     for (const task of tasks) {
       const layer = layerCache.get(task.id) ?? 0;
@@ -197,7 +174,7 @@ export default function EventGraphPage() {
       });
     }
 
-    const width = Math.max(PADDING * 2 + layerCount * NODE_W + (layerCount - 1) * GAP_X, 400);
+    const width = Math.max(PADDING * 2 + layerCount * NODE_W + (layerCount - 1) * GAP_X, 600);
     const height = Math.max(layerCount * (NODE_H + GAP_Y), 200) + PADDING * 2;
 
     return { nodes, edges, width, height };
@@ -234,13 +211,6 @@ export default function EventGraphPage() {
 
   return (
     <section className="page">
-      <style>{`
-        .graph-node { cursor: pointer; }
-        .graph-node rect { transition: stroke 120ms ease; }
-        .graph-node:hover rect { stroke: ${COLOR_SELECTED}; }
-        .graph-node--selected rect { stroke: ${COLOR_SELECTED}; }
-      `}</style>
-
       <div className="page__header">
         <h2 className="page__title">Граф задач</h2>
         <div className="toolbar">
@@ -296,6 +266,7 @@ export default function EventGraphPage() {
 
       {layout !== null && (
         <>
+          {/* Легенда */}
           <div className="graph-legend" aria-hidden="true">
             <span className="graph-legend__item">
               <span className="graph-legend__line" /> связь: после окончания →
@@ -312,120 +283,275 @@ export default function EventGraphPage() {
             </span>
           </div>
 
-          <div className="graph-panel" style={{ overflow: "auto" }}>
-            <svg
-              role="img"
-              aria-label="Граф зависимостей задач"
-              width={layout.width}
-              height={layout.height}
-              viewBox={`0 0 ${layout.width} ${layout.height}`}
-              style={{ display: "block" }}
-            >
-              {layout.edges.map((edge) => {
-                const x1 = edge.from.x + NODE_W;
-                const y1 = edge.from.y + NODE_H / 2;
-                const x2 = edge.to.x;
-                const y2 = edge.to.y + NODE_H / 2;
-                const showLabel = edge.type !== "FS" || edge.lag !== 0;
-                return (
-                  <g key={edge.key}>
-                    <path
-                      d={`M ${x1} ${y1} C ${x1 + 28} ${y1}, ${x2 - 28} ${y2}, ${x2} ${y2}`}
-                      fill="none"
-                      stroke={edge.critical ? COLOR_EDGE_CRITICAL : COLOR_EDGE}
-                      strokeWidth={edge.critical ? 2 : 1.5}
-                    />
-                    {showLabel && (
-                      <text
-                        x={(x1 + x2) / 2}
-                        y={(y1 + y2) / 2 - 4}
-                        textAnchor="middle"
-                        fontSize={10}
-                        fill={COLOR_LABEL}
+          <div className="graph-container">
+            {/* Левая часть: SVG-граф */}
+            <div className="graph-canvas">
+              <div className="graph-controls">
+                <Button onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))}>−</Button>
+                <span className="graph-controls__zoom">{Math.round(zoom * 100)}%</span>
+                <Button onClick={() => setZoom((z) => Math.min(2, z + 0.1))}>+</Button>
+                <Button onClick={() => setZoom(1)}>Сброс</Button>
+              </div>
+              <div className="graph-svg-wrapper" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
+                <svg
+                  role="img"
+                  aria-label="Граф зависимостей задач"
+                  width={layout.width}
+                  height={layout.height}
+                  viewBox={`0 0 ${layout.width} ${layout.height}`}
+                  style={{ display: 'block' }}
+                >
+                  <defs>
+                    <marker
+                      id="arrowhead"
+                      markerWidth="10"
+                      markerHeight="10"
+                      refX="8"
+                      refY="3"
+                      orient="auto"
+                    >
+                      <polygon points="0 0, 8 3, 0 6" fill="#D1D5DB" />
+                    </marker>
+                    <marker
+                      id="arrowhead-critical"
+                      markerWidth="10"
+                      markerHeight="10"
+                      refX="8"
+                      refY="3"
+                      orient="auto"
+                    >
+                      <polygon points="0 0, 8 3, 0 6" fill="#DC2626" />
+                    </marker>
+                  </defs>
+
+                  {/* Рёбра */}
+                  {layout.edges.map((edge) => {
+                    const x1 = edge.from.x + NODE_W;
+                    const y1 = edge.from.y + NODE_H / 2;
+                    const x2 = edge.to.x;
+                    const y2 = edge.to.y + NODE_H / 2;
+                    const showLabel = edge.type !== "FS" || edge.lag !== 0;
+                    return (
+                      <g key={edge.key}>
+                        <path
+                          d={`M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`}
+                          fill="none"
+                          stroke={edge.critical ? "#DC2626" : "#D1D5DB"}
+                          strokeWidth={edge.critical ? 2.5 : 1.5}
+                          markerEnd={edge.critical ? "url(#arrowhead-critical)" : "url(#arrowhead)"}
+                        />
+                        {showLabel && (
+                          <g>
+                            <rect
+                              x={(x1 + x2) / 2 - 24}
+                              y={(y1 + y2) / 2 - 18}
+                              width="48"
+                              height="14"
+                              rx="4"
+                              fill="#FFFFFF"
+                              stroke="#E7E5E0"
+                            />
+                            <text
+                              x={(x1 + x2) / 2}
+                              y={(y1 + y2) / 2 - 8}
+                              textAnchor="middle"
+                              fontSize={10}
+                              fill="#6B7280"
+                              fontWeight={500}
+                            >
+                              {edge.type === "FS" ? `+${edge.lag} дн.` : `${edge.type} +${edge.lag}`}
+                            </text>
+                          </g>
+                        )}
+                      </g>
+                    );
+                  })}
+
+                  {/* Узлы-карточки */}
+                  {layout.nodes.map((node) => {
+                    const critical = node.task.is_critical;
+                    const isSelected = node.task.id === selectedId;
+                    const hasFloat = node.task.total_float !== null && node.task.total_float > 0;
+                    return (
+                      <g
+                        key={node.task.id}
+                        className={isSelected ? "graph-node graph-node--selected" : "graph-node"}
+                        onClick={() => setSelectedId(node.task.id)}
+                        style={{ cursor: 'pointer' }}
                       >
-                        {edge.type === "FS" ? `${edge.lag} дн.` : `${edge.type} · ${edge.lag} дн.`}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-              {layout.nodes.map((node) => {
-                const critical = node.task.is_critical;
-                const isSelected = node.task.id === selectedId;
-                return (
-                  <g
-                    key={node.task.id}
-                    className={isSelected ? "graph-node graph-node--selected" : "graph-node"}
-                    onClick={() => setSelectedId(node.task.id)}
-                  >
-                    <title>
-                      {node.task.name} — {node.task.duration_days} дн. Кликните для деталей
-                    </title>
-                    <rect
-                      x={node.x}
-                      y={node.y}
-                      width={NODE_W}
-                      height={NODE_H}
-                      rx={8}
-                      fill={critical ? COLOR_CRITICAL_FILL : COLOR_NODE_FILL}
-                      stroke={isSelected ? COLOR_SELECTED : critical ? COLOR_CRITICAL_STROKE : COLOR_NODE_STROKE}
-                      strokeWidth={1.5}
-                    />
-                    <text
-                      x={node.x + 12}
-                      y={node.y + 19}
-                      fontSize={12}
-                      fill={critical ? COLOR_CRITICAL_STROKE : COLOR_NODE_TEXT}
-                    >
-                      {truncateName(node.task.name)}
-                    </text>
-                    <text
-                      x={node.x + 12}
-                      y={node.y + 34}
-                      fontSize={11}
-                      fill={COLOR_LABEL}
-                    >
-                      · {node.task.duration_days} дн
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-
-          <div className="hint-panel" style={{ marginTop: 12 }}>
-            Граф показывает порядок работ: стрелка от предшественника к последователю. Подпись на
-            стрелке — особая связь (например, «Финиш–Финиш · 2 дн.»). Красным выделена критическая
-            цепочка — задачи без запаса: задержка любой двигает весь проект. Одиночные узлы слева —
-            задачи без зависимостей: свяжите их на странице «Задачи» → кнопка «Зависимости», чтобы
-            получить цепочку и план. Правая панель показывает детали выбранной задачи, там же кнопка
-            «Обновить план».
-          </div>
-
-          {selected !== null && (
-            <div className="card graph-node-card fade-in" style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <strong>{selected.name}</strong>
-                {selected.is_critical ? (
-                  <Badge tone="critical">Критическая</Badge>
-                ) : (
-                  <Badge tone="muted">Резерв TF: {selected.total_float ?? "—"} дн.</Badge>
-                )}
-              </div>
-              <div className="muted">
-                ES: {formatDay(selected.earliest_start)} · EF: {formatDay(selected.earliest_finish)}{" "}
-                · LS: {formatDay(selected.latest_start)} · LF: {formatDay(selected.latest_finish)}
-              </div>
-              <div className="toolbar">
-                <Button variant="sm" onClick={() => navigate(tasksHref)}>
-                  К задачам
-                </Button>
-                <Button variant="sm" onClick={() => void recalculate()} disabled={calcBusy}>
-                  Обновить план
-                </Button>
+                        <title>{`${node.task.name} — ${node.task.duration_days} дн. Кликните для деталей`}</title>
+                        {/* Карточка */}
+                        <rect
+                          x={node.x}
+                          y={node.y}
+                          width={NODE_W}
+                          height={NODE_H}
+                          rx={12}
+                          fill={critical ? "#FEF2F2" : "#FFFFFF"}
+                          stroke={
+                            isSelected
+                              ? "#C2552B"
+                              : critical
+                              ? "#EF4444"
+                              : "#E7E5E0"
+                          }
+                          strokeWidth={isSelected ? 3 : 1.5}
+                        />
+                        {/* Цветная точка-статус */}
+                        <circle
+                          cx={node.x + 20}
+                          cy={node.y + 20}
+                          r={6}
+                          fill={critical ? "#EF4444" : "#3A7D5C"}
+                        />
+                        {/* Название */}
+                        <text
+                          x={node.x + 34}
+                          y={node.y + 24}
+                          fontSize={13}
+                          fontWeight={600}
+                          fill={critical ? "#EF4444" : "#1F2937"}
+                        >
+                          {node.task.name.length > 24 ? node.task.name.slice(0, 23) + "…" : node.task.name}
+                        </text>
+                        {/* Длительность */}
+                        <text x={node.x + 16} y={node.y + 52} fontSize={11} fill="#6B7280">
+                          ⏱ {node.task.duration_days} дн.
+                        </text>
+                        {/* Запас / критическая */}
+                        <text
+                          x={node.x + 16}
+                          y={node.y + 72}
+                          fontSize={11}
+                          fontWeight={500}
+                          fill={critical ? "#EF4444" : hasFloat ? "#3A7D5C" : "#6B7280"}
+                        >
+                          {critical ? "🔥 Критическая" : hasFloat ? `✓ Запас ${node.task.total_float} дн.` : "Без расчёта"}
+                        </text>
+                        {/* Фактический план */}
+                        {node.task.actual_start !== null && (
+                          <text x={node.x + 16} y={node.y + 92} fontSize={10} fill="#6B7280">
+                            📅 День {node.task.actual_start}–{node.task.actual_finish}
+                          </text>
+                        )}
+                        {/* Бейдж CRITICAL в правом верхнем углу */}
+                        {critical && (
+                          <>
+                            <rect
+                              x={node.x + NODE_W - 68}
+                              y={node.y + 8}
+                              width={60}
+                              height={18}
+                              rx={9}
+                              fill="#EF4444"
+                            />
+                            <text
+                              x={node.x + NODE_W - 38}
+                              y={node.y + 21}
+                              fontSize={9}
+                              fontWeight={700}
+                              fill="#FFFFFF"
+                              textAnchor="middle"
+                              letterSpacing="0.05em"
+                            >
+                              CRITICAL
+                            </text>
+                          </>
+                        )}
+                      </g>
+                    );
+                  })}
+                </svg>
               </div>
             </div>
-          )}
+
+            {/* Правая часть: детальная панель */}
+            <div className="graph-detail-panel">
+              {selected !== null ? (
+                <div className="fade-in">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+                    <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>
+                      {selected.name}
+                    </h3>
+                    {selected.is_critical ? (
+                      <Badge tone="critical">Критическая</Badge>
+                    ) : selected.total_float !== null && selected.total_float > 0 ? (
+                      <Badge tone="ok">Запас {selected.total_float} дн.</Badge>
+                    ) : (
+                      <Badge tone="muted">Не рассчитано</Badge>
+                    )}
+                  </div>
+
+                  <div className="detail-row">
+                    <span className="detail-label">Длительность:</span>
+                    <span className="detail-value">{selected.duration_days} дн.</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Раннее начало (ES):</span>
+                    <span className="detail-value">{formatDay(selected.earliest_start)}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Раннее окончание (EF):</span>
+                    <span className="detail-value">{formatDay(selected.earliest_finish)}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Позднее начало (LS):</span>
+                    <span className="detail-value">{formatDay(selected.latest_start)}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Позднее окончание (LF):</span>
+                    <span className="detail-value">{formatDay(selected.latest_finish)}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Полный резерв (TF):</span>
+                    <span className="detail-value">{selected.total_float !== null ? `${selected.total_float} дн.` : "—"}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Свободный резерв (FF):</span>
+                    <span className="detail-value">{selected.free_float !== null ? `${selected.free_float} дн.` : "—"}</span>
+                  </div>
+                  {selected.actual_start !== null && (
+                    <>
+                      <div style={{ marginTop: 16, fontSize: 12, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Фактический план
+                      </div>
+                      <div className="detail-row">
+                        <span className="detail-label">Старт:</span>
+                        <span className="detail-value">{formatDay(selected.actual_start)}</span>
+                      </div>
+                      <div className="detail-row">
+                        <span className="detail-label">Финиш:</span>
+                        <span className="detail-value">{formatDay(selected.actual_finish)}</span>
+                      </div>
+                    </>
+                  )}
+
+                  <div className="detail-actions">
+                    <Button variant="ghost" onClick={() => navigate(tasksHref)}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>←</span> К задачам
+                      </span>
+                    </Button>
+                    <Button variant="primary" onClick={() => void recalculate()} disabled={calcBusy}>
+                      {calcBusy ? <Spinner /> : "Обновить план"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>👆</div>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Выберите задачу</div>
+                  <div style={{ fontSize: 13, color: '#6B7280', lineHeight: 1.5 }}>
+                    Кликните по карточке задачи слева, чтобы увидеть детали: резервы, сроки, критический путь.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="hint-panel" style={{ marginTop: 16 }}>
+            <strong>Как читать граф:</strong> стрелка ведёт от предшественника к последователю. Подпись на стрелке — особая связь (например, «FF +2»). Красным выделена критическая цепочка — задачи без запаса. Одиночные узлы слева — задачи без зависимостей, свяжите их на странице «Задачи». Кликните узел, чтобы открыть детали справа.
+          </div>
         </>
       )}
     </section>
