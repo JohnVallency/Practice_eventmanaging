@@ -254,3 +254,192 @@ def calculate_forward_pass(
         earliest[tid] = {"earliest_start": es, "earliest_finish": ef}
 
     return earliest
+
+
+def calculate_backward_pass(
+    tasks: Iterable[_TaskLike],
+    dependencies: Iterable[_DependencyLike],
+    project_duration: int,
+) -> dict[uuid.UUID, dict[str, int]]:
+    """Обратный проход CPM: поздние старты и финишы каждой задачи.
+
+    Задачи обрабатываются в ОБРАТНОМ топологическом порядке (цикл уже
+    исключён прямым проходом вызывающего кода). Задачи без последователей
+    получают ``LF = project_duration``; иначе LF — минимум по ограничениям
+    всех связей, где ``lag`` — лаг в днях, ``d`` — длительность самой задачи::
+
+        FS: LF = min(LS_succ - lag)
+        SS: LF = min(LS_succ - lag + d)
+        FF: LF = min(LF_succ - lag)
+        SF: LF = min(LF_succ - lag + d)
+
+    Поздний старт всегда равен LS = LF - duration_days.
+
+    Args:
+        tasks: объекты с атрибутами ``id: uuid.UUID`` и ``duration_days: int``.
+        dependencies: объекты с атрибутами ``predecessor_id``,
+            ``successor_id``, ``dependency_type``, ``lag_days``.
+        project_duration: длительность проекта в днях (max EF всех задач).
+
+    Returns:
+        dict: {task_id: {"latest_start": int, "latest_finish": int}}.
+        Пустой tasks -> {}.
+
+    Example:
+        Цепочка A(2) -FS-> B(3) -FS-> C(4) без лага, проект 9::
+
+            LF(C) = 9, LS(C) = 5;  LF(B) = 5, LS(B) = 2;  LF(A) = 2, LS(A) = 0
+    """
+    if not tasks:
+        return {}
+
+    task_list = list(tasks)
+    durations: dict[uuid.UUID, int] = {
+        task.id: int(task.duration_days) for task in task_list
+    }
+
+    # Последователи каждой задачи: pred_id -> [(succ_id, тип, лаг)].
+    successors: dict[uuid.UUID, list[tuple[uuid.UUID, str, int]]] = {}
+    seen_pairs: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    for dep in dependencies:
+        pair = (dep.predecessor_id, dep.successor_id)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        successors.setdefault(dep.predecessor_id, []).append(
+            (
+                dep.successor_id,
+                _dependency_type_value(dep.dependency_type),
+                int(dep.lag_days),
+            )
+        )
+
+    # Обход в обратном топологическом порядке: последователи задачи
+    # гарантированно уже обработаны.
+    order = topological_sort_kahn(task_list, dependencies)
+    latest: dict[uuid.UUID, dict[str, int]] = {}
+    ls_values: dict[uuid.UUID, int] = {}
+    lf_values: dict[uuid.UUID, int] = {}
+
+    for tid in reversed(order):
+        duration = durations[tid]
+        succ_deps = successors.get(tid)
+        if not succ_deps:
+            lf = int(project_duration)
+        else:
+            candidates: list[int] = []
+            for succ_id, dep_type, lag in succ_deps:
+                if dep_type == "FS":
+                    candidates.append(ls_values[succ_id] - lag)
+                elif dep_type == "SS":
+                    candidates.append(ls_values[succ_id] - lag + duration)
+                elif dep_type == "FF":
+                    candidates.append(lf_values[succ_id] - lag)
+                else:  # "SF"
+                    candidates.append(lf_values[succ_id] - lag + duration)
+            lf = min(candidates)
+        ls = lf - duration
+        ls_values[tid] = ls
+        lf_values[tid] = lf
+        latest[tid] = {"latest_start": ls, "latest_finish": lf}
+
+    return latest
+
+
+def calculate_floats(
+    tasks: Iterable[_TaskLike],
+    dependencies: Iterable[_DependencyLike],
+    forward: dict[uuid.UUID, dict[str, int]],
+    backward: dict[uuid.UUID, dict[str, int]],
+) -> dict[uuid.UUID, dict[str, int]]:
+    """Полные и свободные резервы времени каждой задачи.
+
+    Формулы::
+
+        total_float = LS - ES
+        free_float  = min(ES последователей) - EF  (у задач без
+                      последователей free_float = 0)
+
+    ВАЖНО: ``lag`` во free_float не учитывается — упрощение принято в ТЗ;
+    значения точны при lag = 0.
+
+    Args:
+        tasks: объекты с атрибутом ``id: uuid.UUID``.
+        dependencies: объекты с атрибутами ``predecessor_id``,
+            ``successor_id``, ``dependency_type``, ``lag_days``.
+        forward: результат :func:`calculate_forward_pass`.
+        backward: результат :func:`calculate_backward_pass`.
+
+    Returns:
+        dict: {task_id: {"total_float": int, "free_float": int}}.
+        Пустой tasks -> {}.
+    """
+    task_ids = [task.id for task in tasks]
+    if not task_ids:
+        return {}
+
+    successors: dict[uuid.UUID, list[uuid.UUID]] = {}
+    seen_pairs: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    for dep in dependencies:
+        pair = (dep.predecessor_id, dep.successor_id)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        successors.setdefault(dep.predecessor_id, []).append(dep.successor_id)
+
+    floats: dict[uuid.UUID, dict[str, int]] = {}
+    for tid in task_ids:
+        es = forward[tid]["earliest_start"]
+        ef = forward[tid]["earliest_finish"]
+        ls = backward[tid]["latest_start"]
+        total = ls - es
+        succ_ids = successors.get(tid)
+        if succ_ids:
+            free = min(forward[s]["earliest_start"] for s in succ_ids) - ef
+        else:
+            free = 0
+        floats[tid] = {"total_float": total, "free_float": free}
+
+    return floats
+
+
+def identify_critical_path(
+    tasks: Iterable[_TaskLike],
+    total_floats: dict[uuid.UUID, dict[str, int] | int],
+) -> list[uuid.UUID]:
+    """Критический путь: задачи с нулевым полным резервом (TF == 0).
+
+    Args:
+        tasks: объекты с атрибутом ``id: uuid.UUID``; резервы берутся из
+            ``total_floats``.
+        total_floats: принимает как полный результат
+            :func:`calculate_floats` ({task_id: {"total_float": int,
+            "free_float": int}}), так и плоское отображение
+            {task_id: int}.
+
+    Returns:
+        list[uuid.UUID]: id критических задач в порядке следования ``tasks``
+        (вызывающий код подаёт задачи в топологическом порядке либо порядок
+        середины пути не важен).
+
+    Example:
+        Ромб с TF: A=0, B=2, C=0, D=0 -> [A, C, D].
+    """
+    task_list = list(tasks)
+    if not task_list:
+        return []
+
+    def _total_float(raw: dict[str, int] | int | None) -> int | None:
+        """Извлечь TF из вложенного результата или плоского значения."""
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            return int(raw["total_float"])
+        return int(raw)
+
+    critical: list[uuid.UUID] = []
+    for task in task_list:
+        tf = _total_float(total_floats.get(task.id))
+        if tf == 0:
+            critical.append(task.id)
+    return critical
