@@ -1,10 +1,6 @@
-/**
- * Страница задач события /events/:id/tasks.
- * CRUD задач, управление зависимостями (FS/SS/FF/SF) и расчёт CPM.
- */
-
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useParams } from "react-router-dom";
+import { FiEdit2, FiTrash2, FiLink, FiSearch } from "react-icons/fi";
 
 import { api } from "../services/api";
 import { describeError } from "../services/errors";
@@ -22,7 +18,6 @@ import {
 
 const DEP_TYPES: readonly DependencyType[] = ["FS", "SS", "FF", "SF"];
 
-/** Русские подписи типов связей — вместо «непонятных» FS/SS/FF/SF. */
 const DEP_TYPE_LABELS: Record<DependencyType, string> = {
   FS: "Финиш–Старт (после окончания)",
   SS: "Старт–Старт (одновременно)",
@@ -48,15 +43,9 @@ interface DepFormState {
 
 const EMPTY_DEP_FORM: DepFormState = { predecessorId: "", type: "FS", lagDays: "0" };
 
-/** Смещение в днях → "день N" или "—". */
-function formatDay(value: number | null): string {
-  return value === null ? "—" : `день ${value}`;
-}
-
 export default function TasksPage() {
   const { id } = useParams<{ id: string }>();
   const { push } = useToast();
-  // push может быть нестабилен между рендерами — держим его в ref для колбэков.
   const pushRef = useRef(push);
   useEffect(() => {
     pushRef.current = push;
@@ -66,26 +55,36 @@ export default function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Фильтры и поиск
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState<"all" | "critical" | "float">("all");
+
   const [calcBusy, setCalcBusy] = useState(false);
-  // Подсказка про критические задачи показывается после расчёта и остаётся на странице.
   const [showCalcHint, setShowCalcHint] = useState(false);
 
+  // Создание
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createDuration, setCreateDuration] = useState("1");
+  const [createPredecessorId, setCreatePredecessorId] = useState("");
+  const [createDepType, setCreateDepType] = useState<DependencyType>("FS");
+  const [createDepLag, setCreateDepLag] = useState("0");
   const [createBusy, setCreateBusy] = useState(false);
 
+  // Редактирование
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [editName, setEditName] = useState("");
   const [editDuration, setEditDuration] = useState("1");
   const [editBusy, setEditBusy] = useState(false);
 
+  // Зависимости
   const [depsTask, setDepsTask] = useState<Task | null>(null);
   const [deps, setDeps] = useState<TaskDependency[]>([]);
   const [depsLoading, setDepsLoading] = useState(false);
   const [depForm, setDepForm] = useState<DepFormState>(EMPTY_DEP_FORM);
   const [depBusy, setDepBusy] = useState(false);
 
+  // Удаление
   const [deleteTask, setDeleteTask] = useState<Task | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
@@ -98,7 +97,8 @@ export default function TasksPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      setTasks(await api.tasks.list(id));
+      const data = await api.tasks.list(id);
+      setTasks(data);
     } catch (error: unknown) {
       const message = describeError(error);
       setLoadError(message);
@@ -113,44 +113,49 @@ export default function TasksPage() {
   }, [load]);
 
   const reloadDeps = useCallback(async (taskId: string): Promise<void> => {
+    setDepsLoading(true);
     try {
-      setDeps(await api.dependencies.list(taskId));
+      const list = await api.dependencies.list(taskId);
+      setDeps(list);
     } catch (error: unknown) {
       pushRef.current({
         tone: "error",
         title: "Ошибка загрузки зависимостей",
         message: describeError(error),
       });
+    } finally {
+      setDepsLoading(false);
     }
   }, []);
 
-  // Зависимости открытой задачи подгружаются при её выборе.
   useEffect(() => {
-    if (!depsTask) {
-      return;
+    if (depsTask !== null) {
+      void reloadDeps(depsTask.id);
+    } else {
+      setDeps([]);
+      setDepForm(EMPTY_DEP_FORM);
     }
-    let cancelled = false;
-    setDepsLoading(true);
-    api.dependencies
-      .list(depsTask.id)
-      .then((data) => {
-        if (!cancelled) setDeps(data);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        pushRef.current({
-          tone: "error",
-          title: "Ошибка загрузки зависимостей",
-          message: describeError(error),
-        });
-      })
-      .finally(() => {
-        if (!cancelled) setDepsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [depsTask]);
+  }, [depsTask, reloadDeps]);
+
+  // Фильтрация задач
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((task) => {
+      const matchesSearch = task.name.toLowerCase().includes(searchQuery.toLowerCase());
+      if (!matchesSearch) return false;
+
+      if (filterType === "critical") return task.is_critical;
+      if (filterType === "float") return task.total_float !== null && task.total_float > 0;
+      return true;
+    });
+  }, [tasks, searchQuery, filterType]);
+
+  // Статистика
+  const stats = useMemo(() => {
+    const total = tasks.length;
+    const critical = tasks.filter((t) => t.is_critical).length;
+    const totalDuration = tasks.reduce((sum, t) => sum + t.duration_days, 0);
+    return { total, critical, totalDuration };
+  }, [tasks]);
 
   const calculateCpm = async (): Promise<void> => {
     if (!id) return;
@@ -159,15 +164,15 @@ export default function TasksPage() {
       const data = await api.schedule.calculate(id);
       pushRef.current({
         tone: "ok",
-        title: "CPM рассчитан",
-        message: `Горизонт: ${data.project_duration} дн., критических: ${data.critical_path.length}`,
+        title: "План пересчитан",
+        message: `Горизонт проекта: ${data.project_duration} дн., на критическом пути: ${data.critical_path.length} задач`,
       });
       setShowCalcHint(true);
       await load();
     } catch (error: unknown) {
       pushRef.current({
         tone: "error",
-        title: "Ошибка расчёта CPM",
+        title: "Ошибка расчёта плана",
         message: describeError(error),
       });
     } finally {
@@ -178,27 +183,42 @@ export default function TasksPage() {
   const submitCreate = async (): Promise<void> => {
     if (!id) return;
     const name = createName.trim();
-    const duration = Number(createDuration);
-    if (name.length === 0) {
+    if (!name) {
       pushRef.current({ tone: "error", title: "Укажите название задачи" });
       return;
     }
-    if (!Number.isInteger(duration) || duration < 1) {
+    const duration = parseInt(createDuration, 10);
+    if (Number.isNaN(duration) || duration < 1) {
       pushRef.current({ tone: "error", title: "Длительность — целое число, минимум 1 день" });
       return;
     }
+
     setCreateBusy(true);
     try {
-      await api.tasks.create(id, { name, duration_days: duration });
+      const newTask = await api.tasks.create(id, { name, duration_days: duration });
+      
+      // Если указан предшественник — создаём связь
+      if (createPredecessorId) {
+        const lag = parseInt(createDepLag, 10);
+        await api.dependencies.create(newTask.id, {
+          predecessor_id: createPredecessorId,
+          dependency_type: createDepType,
+          lag_days: Number.isNaN(lag) ? 0 : Math.max(0, lag),
+        });
+      }
+
       pushRef.current({ tone: "ok", title: "Задача добавлена", message: name });
       setCreateOpen(false);
       setCreateName("");
       setCreateDuration("1");
+      setCreatePredecessorId("");
+      setCreateDepType("FS");
+      setCreateDepLag("0");
       await load();
     } catch (error: unknown) {
       pushRef.current({
         tone: "error",
-        title: "Не удалось добавить задачу",
+        title: "Не удалось создать задачу",
         message: describeError(error),
       });
     } finally {
@@ -206,28 +226,29 @@ export default function TasksPage() {
     }
   };
 
-  const openEdit = (task: Task): void => {
+  const openEdit = (task: Task) => {
     setEditTask(task);
     setEditName(task.name);
     setEditDuration(String(task.duration_days));
   };
 
   const submitEdit = async (): Promise<void> => {
-    if (!editTask) return;
+    if (editTask === null) return;
     const name = editName.trim();
-    const duration = Number(editDuration);
-    if (name.length === 0) {
+    if (!name) {
       pushRef.current({ tone: "error", title: "Укажите название задачи" });
       return;
     }
-    if (!Number.isInteger(duration) || duration < 1) {
+    const duration = parseInt(editDuration, 10);
+    if (Number.isNaN(duration) || duration < 1) {
       pushRef.current({ tone: "error", title: "Длительность — целое число, минимум 1 день" });
       return;
     }
+
     setEditBusy(true);
     try {
       await api.tasks.update(editTask.id, { name, duration_days: duration });
-      pushRef.current({ tone: "ok", title: "Задача обновлена" });
+      pushRef.current({ tone: "ok", title: "Задача обновлена", message: name });
       setEditTask(null);
       await load();
     } catch (error: unknown) {
@@ -241,23 +262,22 @@ export default function TasksPage() {
     }
   };
 
-  const openDeps = (task: Task): void => {
+  const openDeps = (task: Task) => {
     setDepsTask(task);
-    setDeps([]);
-    setDepForm(EMPTY_DEP_FORM);
   };
 
-  const addDependency = async (): Promise<void> => {
-    if (!depsTask) return;
-    if (depForm.predecessorId.length === 0) {
+  const submitAddDep = async (): Promise<void> => {
+    if (depsTask === null) return;
+    if (!depForm.predecessorId) {
       pushRef.current({ tone: "error", title: "Выберите задачу-предшественника" });
       return;
     }
-    const lag = Number(depForm.lagDays);
-    if (!Number.isInteger(lag) || lag < 0) {
+    const lag = parseInt(depForm.lagDays, 10);
+    if (Number.isNaN(lag) || lag < 0) {
       pushRef.current({ tone: "error", title: "Лаг — целое число, минимум 0" });
       return;
     }
+
     setDepBusy(true);
     try {
       await api.dependencies.create(depsTask.id, {
@@ -265,14 +285,13 @@ export default function TasksPage() {
         dependency_type: depForm.type,
         lag_days: lag,
       });
-      pushRef.current({ tone: "ok", title: "Зависимость добавлена" });
-      setDepForm((form) => ({ ...form, predecessorId: "" }));
+      pushRef.current({ tone: "ok", title: "Связь добавлена" });
+      setDepForm(EMPTY_DEP_FORM);
       await reloadDeps(depsTask.id);
     } catch (error: unknown) {
-      // Цикл от бэкенда приходит как 400 с detail — показываем текст в toast.
       pushRef.current({
         tone: "error",
-        title: "Не удалось добавить зависимость",
+        title: "Не удалось добавить связь",
         message: describeError(error),
       });
     } finally {
@@ -280,31 +299,31 @@ export default function TasksPage() {
     }
   };
 
-  const removeDependency = async (dep: TaskDependency): Promise<void> => {
-    if (!depsTask) return;
+  const removeDep = async (predecessorId: string): Promise<void> => {
+    if (depsTask === null) return;
+    setDepBusy(true);
     try {
-      await api.dependencies.remove(depsTask.id, dep.predecessor_id);
-      pushRef.current({ tone: "ok", title: "Зависимость удалена" });
+      await api.dependencies.remove(depsTask.id, predecessorId);
+      pushRef.current({ tone: "ok", title: "Связь удалена" });
       await reloadDeps(depsTask.id);
     } catch (error: unknown) {
       pushRef.current({
         tone: "error",
-        title: "Не удалось удалить зависимость",
+        title: "Не удалось удалить связь",
         message: describeError(error),
       });
+    } finally {
+      setDepBusy(false);
     }
   };
 
-  const confirmDelete = async (): Promise<void> => {
-    if (!deleteTask) return;
+  const submitDelete = async (): Promise<void> => {
+    if (deleteTask === null) return;
     setDeleteBusy(true);
     try {
       await api.tasks.delete(deleteTask.id);
       pushRef.current({ tone: "ok", title: "Задача удалена", message: deleteTask.name });
-      const removedId = deleteTask.id;
       setDeleteTask(null);
-      setDepsTask((current) => (current?.id === removedId ? null : current));
-      setEditTask((current) => (current?.id === removedId ? null : current));
       await load();
     } catch (error: unknown) {
       pushRef.current({
@@ -317,30 +336,36 @@ export default function TasksPage() {
     }
   };
 
-  const nameById = new Map(tasks.map((task) => [task.id, task.name] as const));
-  const predecessorOptions =
-    depsTask === null ? [] : tasks.filter((task) => task.id !== depsTask.id);
-  // По одному предшественнику в списке (DELETE удаляет связь по паре задача-предшественник).
-  const uniqueDeps = deps.filter(
-    (dep, index) => deps.findIndex((other) => other.predecessor_id === dep.predecessor_id) === index,
-  );
+  const taskNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of tasks) {
+      map.set(t.id, t.name);
+    }
+    return map;
+  }, [tasks]);
 
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">Задачи</h2>
+        <div>
+          <h2 className="page__title">Задачи события</h2>
+          <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+            Всего: {stats.total} · Критических: {stats.critical} · Суммарно: {stats.totalDuration} дн.
+          </div>
+        </div>
+
         <div className="toolbar">
-          <Button variant="primary" onClick={() => setCreateOpen(true)}>
-            Добавить задачу
-          </Button>
           <Button variant="ghost" onClick={() => void calculateCpm()} disabled={calcBusy}>
             {calcBusy ? (
               <>
                 <Spinner /> Расчёт…
               </>
             ) : (
-              "Рассчитать CPM"
+              "Рассчитать план"
             )}
+          </Button>
+          <Button variant="primary" onClick={() => setCreateOpen(true)}>
+            + Добавить задачу
           </Button>
         </div>
       </div>
@@ -348,21 +373,55 @@ export default function TasksPage() {
       {showCalcHint && (
         <div className="hint-panel" style={{ marginBottom: 16 }}>
           <strong>Почему задачи помечены критическими?</strong>
-          <p style={{ margin: "6px 0 0" }}>
-            Критическая задача — та, у которой нет запаса: любая задержка двигает весь проект. Если
-            задач несколько и они не связаны зависимостями, каждая может сдвинуть проект — поэтому
-            помечены все. Свяжите задачи зависимостями на странице «Граф» — и критический путь
-            станет единственным и понятным.
-          </p>
+          <div style={{ marginTop: 6 }}>
+            Критическая задача — та, у которой нет запаса: любая задержка двигает весь проект.
+            Если задач несколько и они не связаны зависимостями, каждая может сдвинуть проект —
+            поэтому помечены все. Свяжите задачи зависимостями на странице «Граф» — и критический
+            путь станет единственным и понятным.
+          </div>
         </div>
       )}
 
+      {/* Поиск и фильтры */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+          <FiSearch style={{ position: "absolute", left: 12, top: 12, color: "#6B7280" }} />
+          <input
+            type="text"
+            placeholder="Поиск по названию..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ ...SELECT_STYLE, paddingLeft: 36 }}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button
+            variant={filterType === "all" ? "primary" : "ghost"}
+            onClick={() => setFilterType("all")}
+          >
+            Все ({tasks.length})
+          </Button>
+          <Button
+            variant={filterType === "critical" ? "primary" : "ghost"}
+            onClick={() => setFilterType("critical")}
+          >
+            Критические ({stats.critical})
+          </Button>
+          <Button
+            variant={filterType === "float" ? "primary" : "ghost"}
+            onClick={() => setFilterType("float")}
+          >
+            С запасом ({tasks.filter((t) => t.total_float !== null && t.total_float > 0).length})
+          </Button>
+        </div>
+      </div>
+
       {loading && (
-        <div className="card" style={{ display: "grid", gap: 12 }}>
-          <Skeleton w="40%" h={20} />
-          <Skeleton w="100%" h={40} />
-          <Skeleton w="100%" h={40} />
-          <Skeleton w="100%" h={40} />
+        <div className="card" style={{ display: "grid", gap: 8 }}>
+          <Skeleton w="100%" h={44} />
+          <Skeleton w="100%" h={44} />
+          <Skeleton w="100%" h={44} />
         </div>
       )}
 
@@ -380,8 +439,8 @@ export default function TasksPage() {
 
       {!loading && loadError === null && tasks.length === 0 && (
         <EmptyState
-          title="Задач пока нет"
-          hint="Добавьте первую задачу, чтобы построить план события."
+          title="В событии пока нет задач"
+          hint="Добавьте первую задачу, укажите её длительность и свяжите с другими задачами."
           action={
             <Button variant="primary" onClick={() => setCreateOpen(true)}>
               Добавить задачу
@@ -391,39 +450,39 @@ export default function TasksPage() {
       )}
 
       {!loading && loadError === null && tasks.length > 0 && (
-        <div className="card">
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
           <table className="table">
             <thead>
               <tr>
                 <th>Название</th>
-                <th>Длительность (дн.)</th>
-                <th>Резерв</th>
-                <th>Факт</th>
-                <th>Критическая</th>
-                <th>Действия</th>
+                <th>Длительность</th>
+                <th>Запас</th>
+                <th>План</th>
+                <th>Статус</th>
+                <th style={{ textAlign: "right" }}>Действия</th>
               </tr>
             </thead>
             <tbody>
-              {tasks.map((task) => (
+              {filteredTasks.map((task) => (
                 <tr
                   key={task.id}
                   className={task.is_critical ? "table__row--critical" : undefined}
                 >
-                  <td>{task.name}</td>
-                  <td>{task.duration_days}</td>
+                  <td style={{ fontWeight: 500 }}>{task.name}</td>
+                  <td>{task.duration_days} дн.</td>
                   <td>
                     {task.total_float === null ? (
                       "—"
                     ) : task.total_float > 0 ? (
-                      <Badge tone="ok">{`Запас ${task.total_float} дн.`}</Badge>
+                      <Badge tone="ok">{`+${task.total_float} дн.`}</Badge>
                     ) : (
-                      `${task.total_float} дн.`
+                      <span className="muted">0 дн.</span>
                     )}
                   </td>
-                  <td>
+                  <td className="muted" style={{ fontSize: 13 }}>
                     {task.actual_start === null && task.actual_finish === null
                       ? "—"
-                      : `${formatDay(task.actual_start)} – ${formatDay(task.actual_finish)}`}
+                      : `день ${task.actual_start}–${task.actual_finish}`}
                   </td>
                   <td>
                     {task.is_critical ? (
@@ -432,17 +491,32 @@ export default function TasksPage() {
                       <span className="muted">—</span>
                     )}
                   </td>
-                  <td>
-                    <div className="toolbar">
-                      <Button variant="sm" onClick={() => openEdit(task)}>
-                        Изменить
-                      </Button>
-                      <Button variant="sm" onClick={() => openDeps(task)}>
-                        Зависимости
-                      </Button>
-                      <Button variant="sm" onClick={() => setDeleteTask(task)}>
-                        Удалить
-                      </Button>
+                  <td style={{ textAlign: "right" }}>
+                    <div style={{ display: "inline-flex", gap: 4 }}>
+                      <button
+                        className="btn btn--ghost"
+                        style={{ padding: "6px 10px" }}
+                        onClick={() => openEdit(task)}
+                        title="Редактировать"
+                      >
+                        <FiEdit2 size={14} />
+                      </button>
+                      <button
+                        className="btn btn--ghost"
+                        style={{ padding: "6px 10px" }}
+                        onClick={() => openDeps(task)}
+                        title="Связи задачи"
+                      >
+                        <FiLink size={14} />
+                      </button>
+                      <button
+                        className="btn btn--ghost"
+                        style={{ padding: "6px 10px", color: "#DC2626" }}
+                        onClick={() => setDeleteTask(task)}
+                        title="Удалить"
+                      >
+                        <FiTrash2 size={14} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -452,9 +526,10 @@ export default function TasksPage() {
         </div>
       )}
 
+      {/* Модалка создания задачи */}
       <Modal
         open={createOpen}
-        title="Добавить задачу"
+        title="Новая задача"
         onClose={() => setCreateOpen(false)}
         footer={
           <>
@@ -467,34 +542,93 @@ export default function TasksPage() {
                   <Spinner /> Сохранение…
                 </>
               ) : (
-                "Сохранить"
+                "Создать задачу"
               )}
             </Button>
           </>
         }
       >
-        <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 16 }}>
           <Field
-            label="Название"
+            label="Название задачи"
+            placeholder="Например: Аренда зала, Подготовка презентации"
             value={createName}
-            onChange={(event) => setCreateName(event.target.value)}
-            placeholder="Например, Подготовка площадки"
+            onChange={(e) => setCreateName(e.target.value)}
           />
+
           <Field
-            label="Длительность (дней)"
+            label="Длительность (в днях)"
             type="number"
-            min={1}
-            step={1}
+            min="1"
             value={createDuration}
-            onChange={(event) => setCreateDuration(event.target.value)}
-            hint="Целое число, минимум 1 день"
+            onChange={(e) => setCreateDuration(e.target.value)}
+            hint="Сколько рабочих дней займёт выполнение"
           />
+
+          {tasks.length > 0 && (
+            <div style={{ borderTop: "1px solid #E7E5E0", paddingTop: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+                Предшественник (опционально)
+              </div>
+              <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+                Какая задача должна завершиться до старта этой:
+              </div>
+
+              <select
+                style={{ ...SELECT_STYLE, marginBottom: 12 }}
+                value={createPredecessorId}
+                onChange={(e) => setCreatePredecessorId(e.target.value)}
+              >
+                <option value="">Без предшественника (старт в день 0)</option>
+                {tasks.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.duration_days} дн.)
+                  </option>
+                ))}
+              </select>
+
+              {createPredecessorId && (
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 13, color: "#6B7280", display: "block", marginBottom: 4 }}>
+                      Тип связи
+                    </label>
+                    <select
+                      style={SELECT_STYLE}
+                      value={createDepType}
+                      onChange={(e) => setCreateDepType(e.target.value as DependencyType)}
+                    >
+                      {DEP_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {DEP_TYPE_LABELS[t]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 13, color: "#6B7280", display: "block", marginBottom: 4 }}>
+                      Лаг (дней)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      style={SELECT_STYLE}
+                      value={createDepLag}
+                      onChange={(e) => setCreateDepLag(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </Modal>
 
+      {/* Модалка редактирования задачи */}
       <Modal
         open={editTask !== null}
-        title={editTask === null ? "Изменить задачу" : `Изменить задачу «${editTask.name}»`}
+        title="Редактировать задачу"
         onClose={() => setEditTask(null)}
         footer={
           <>
@@ -513,169 +647,161 @@ export default function TasksPage() {
           </>
         }
       >
-        <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 16 }}>
           <Field
-            label="Название"
+            label="Название задачи"
             value={editName}
-            onChange={(event) => setEditName(event.target.value)}
+            onChange={(e) => setEditName(e.target.value)}
           />
+
           <Field
-            label="Длительность (дней)"
+            label="Длительность (в днях)"
             type="number"
-            min={1}
-            step={1}
+            min="1"
             value={editDuration}
-            onChange={(event) => setEditDuration(event.target.value)}
-            hint="Целое число, минимум 1 день"
+            onChange={(e) => setEditDuration(e.target.value)}
           />
         </div>
       </Modal>
 
+      {/* Модалка связей задачи */}
       <Modal
         open={depsTask !== null}
-        title={depsTask === null ? "Зависимости" : `Зависимости: ${depsTask.name}`}
+        title={depsTask ? `Связи задачи «${depsTask.name}»` : "Связи"}
         onClose={() => setDepsTask(null)}
         footer={
-          <Button variant="ghost" onClick={() => setDepsTask(null)}>
-            Закрыть
+          <Button variant="primary" onClick={() => setDepsTask(null)}>
+            Готово
           </Button>
         }
       >
-        {depsLoading ? (
-          <Skeleton w="100%" h={72} />
-        ) : (
-          <>
-            {uniqueDeps.length === 0 ? (
-              <p className="muted" style={{ marginTop: 0 }}>
-                У этой задачи пока нет предшественников.
-              </p>
-            ) : (
-              <ul
-                style={{
-                  listStyle: "none",
-                  margin: "0 0 16px",
-                  padding: 0,
-                  display: "grid",
-                  gap: 6,
-                }}
-              >
-                {uniqueDeps.map((dep) => (
-                  <li
-                    key={dep.predecessor_id}
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <span style={{ flex: 1 }}>
-                      {nameById.get(dep.predecessor_id) ?? dep.predecessor_id}{" "}
-                      <span className="muted">
-                        ({DEP_TYPE_LABELS[dep.dependency_type]}
-                        {dep.lag_days !== 0 ? `, лаг ${dep.lag_days} дн.` : ""})
-                      </span>
-                    </span>
-                    <Button
-                      variant="sm"
-                      aria-label="Удалить зависимость"
-                      onClick={() => void removeDependency(dep)}
-                    >
-                      ×
-                    </Button>
-                  </li>
-                ))}
-              </ul>
+        <div style={{ display: "grid", gap: 20 }}>
+          {/* Текущие связи */}
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+              Предшественники этой задачи:
+            </div>
+            {depsLoading && <Skeleton w="100%" h={40} />}
+            {!depsLoading && deps.length === 0 && (
+              <div className="muted" style={{ fontSize: 13, padding: "8px 0" }}>
+                Предшественников нет — задача стартует в день 0.
+              </div>
             )}
-            <div
-              style={{
-                display: "grid",
-                gap: 12,
-                borderTop: "1px solid #E7E5E0",
-                paddingTop: 12,
-              }}
-            >
-              <strong>Добавить зависимость</strong>
-              <Field label="Предшественник">
-                <select
-                  value={depForm.predecessorId}
-                  onChange={(event) =>
-                    setDepForm((form) => ({ ...form, predecessorId: event.target.value }))
-                  }
-                  style={SELECT_STYLE}
-                >
-                  <option value="">— выберите задачу —</option>
-                  {predecessorOptions.map((task) => (
-                    <option key={task.id} value={task.id}>
-                      {task.name}
+            {!depsLoading && deps.length > 0 && (
+              <div style={{ display: "grid", gap: 8 }}>
+                {deps.map((dep) => {
+                  const predName = taskNameById.get(dep.predecessor_id) ?? dep.predecessor_id;
+                  const label = DEP_TYPE_LABELS[dep.dependency_type as DependencyType] ?? dep.dependency_type;
+                  return (
+                    <div
+                      key={`${dep.predecessor_id}->${dep.successor_id}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "8px 12px",
+                        background: "#F7F6F3",
+                        borderRadius: 8,
+                        fontSize: 13,
+                      }}
+                    >
+                      <div>
+                        <strong>{predName}</strong>
+                        <span className="muted" style={{ marginLeft: 8 }}>
+                          {label} {dep.lag_days > 0 ? `+${dep.lag_days} дн.` : ""}
+                        </span>
+                      </div>
+                      <button
+                        className="btn btn--ghost"
+                        style={{ padding: "4px 8px", color: "#DC2626" }}
+                        onClick={() => void removeDep(dep.predecessor_id)}
+                        disabled={depBusy}
+                        title="Удалить связь"
+                      >
+                        <FiTrash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Добавление связи */}
+          <div style={{ borderTop: "1px solid #E7E5E0", paddingTop: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
+              Добавить предшественника:
+            </div>
+
+            <div style={{ display: "grid", gap: 12 }}>
+              <select
+                style={SELECT_STYLE}
+                value={depForm.predecessorId}
+                onChange={(e) => setDepForm((prev) => ({ ...prev, predecessorId: e.target.value }))}
+              >
+                <option value="">Выберите задачу-предшественника...</option>
+                {tasks
+                  .filter((t) => depsTask && t.id !== depsTask.id)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.duration_days} дн.)
                     </option>
                   ))}
-                </select>
-              </Field>
-              <Field label="Тип связи">
+              </select>
+
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
                 <select
+                  style={SELECT_STYLE}
                   value={depForm.type}
-                  onChange={(event) =>
-                    setDepForm((form) => ({
-                      ...form,
-                      type: event.target.value as DependencyType,
-                    }))
+                  onChange={(e) =>
+                    setDepForm((prev) => ({ ...prev, type: e.target.value as DependencyType }))
                   }
-                  style={SELECT_STYLE}
                 >
-                  {DEP_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {DEP_TYPE_LABELS[type]}
+                  {DEP_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {DEP_TYPE_LABELS[t]}
                     </option>
                   ))}
                 </select>
-              </Field>
-              <Field
-                label="Лаг (дней)"
-                type="number"
-                min={0}
-                step={1}
-                value={depForm.lagDays}
-                onChange={(event) =>
-                  setDepForm((form) => ({ ...form, lagDays: event.target.value }))
-                }
-                hint="0 — без задержки"
-              />
-              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                Чаще всего нужен тип «Финиш–Старт». Лаг — задержка в днях, обычно 0.
-              </p>
-              <Button variant="primary" onClick={() => void addDependency()} disabled={depBusy}>
-                {depBusy ? (
-                  <>
-                    <Spinner /> Добавление…
-                  </>
-                ) : (
-                  "Добавить зависимость"
-                )}
+
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Лаг"
+                  style={SELECT_STYLE}
+                  value={depForm.lagDays}
+                  onChange={(e) => setDepForm((prev) => ({ ...prev, lagDays: e.target.value }))}
+                />
+              </div>
+
+              <Button variant="primary" onClick={() => void submitAddDep()} disabled={depBusy}>
+                {depBusy ? <Spinner /> : "+ Добавить связь"}
               </Button>
             </div>
-          </>
-        )}
+          </div>
+        </div>
       </Modal>
 
+      {/* Модалка подтверждения удаления */}
       <Modal
         open={deleteTask !== null}
-        title="Удаление задачи"
+        title="Удалить задачу?"
         onClose={() => setDeleteTask(null)}
         footer={
           <>
             <Button variant="ghost" onClick={() => setDeleteTask(null)}>
               Отмена
             </Button>
-            <Button variant="danger" onClick={() => void confirmDelete()} disabled={deleteBusy}>
-              {deleteBusy ? (
-                <>
-                  <Spinner /> Удаление…
-                </>
-              ) : (
-                "Удалить"
-              )}
+            <Button variant="danger" onClick={() => void submitDelete()} disabled={deleteBusy}>
+              {deleteBusy ? <Spinner /> : "Удалить"}
             </Button>
           </>
         }
       >
-        <p style={{ marginTop: 0 }}>Удалить задачу «{deleteTask?.name ?? ""}»?</p>
-        <p className="muted">
+        <p style={{ margin: 0 }}>
+          Вы уверены, что хотите удалить задачу «<strong>{deleteTask?.name}</strong>»?
+        </p>
+        <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
           Связи этой задачи с другими тоже удалятся. Расписание потребуется пересчитать.
         </p>
       </Modal>
