@@ -7,12 +7,9 @@ import { useCallback, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import type { ScheduleCalculationResponse, Task } from "../types";
 import { Badge, Button, EmptyState, Skeleton, Spinner, useToast } from "../components/ui";
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
-}
 
 /** Смещение в днях → "день N" или "—". */
 function formatDay(value: number | null): string {
@@ -66,7 +63,7 @@ export default function SchedulePage() {
         message: `Горизонт: ${data.project_duration} дн., критических: ${data.critical_path.length}`,
       });
     } catch (error: unknown) {
-      const message = getErrorMessage(error);
+      const message = describeError(error);
       setLoadError(message);
       pushRef.current({ tone: "error", title: "Ошибка расчёта расписания", message });
     } finally {
@@ -75,6 +72,12 @@ export default function SchedulePage() {
   };
 
   const entries = schedule === null ? [] : Object.entries(schedule.schedule);
+  // Несколько параллельных критических цепочек: критических задач больше одной,
+  // но есть и некритические (иначе это просто одна цепочка на весь проект).
+  const manyCriticalChains =
+    schedule !== null &&
+    schedule.critical_path.length > 1 &&
+    Object.keys(schedule.schedule).length > schedule.critical_path.length;
   // Порядок строк — порядок критического пути, затем остальные.
   const orderMap = new Map(
     schedule === null
@@ -93,7 +96,7 @@ export default function SchedulePage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">CPM-расписание</h2>
+        <h2 className="page__title">План проекта</h2>
         <div className="toolbar">
           <Button variant="primary" onClick={() => void calculate()} disabled={calculating}>
             {calculating ? (
@@ -105,6 +108,13 @@ export default function SchedulePage() {
             )}
           </Button>
         </div>
+      </div>
+
+      <div className="hint-panel" style={{ marginBottom: 16 }}>
+        План показывает, когда каждая задача должна начаться и закончиться. Порядок задаёте вы —
+        зависимостями между задачами. <strong>Полный резерв</strong> — сколько дней можно задержать
+        задачу без сдвига проекта. <strong>Свободный резерв</strong> — задержка без сдвига соседних
+        задач. План рассчитывается от начала события.
       </div>
 
       {loadingTasks && schedule === null && (
@@ -154,6 +164,13 @@ export default function SchedulePage() {
             </div>
           )}
 
+          {manyCriticalChains && (
+            <div className="hint-panel" style={{ marginTop: 16 }}>
+              Несколько критических цепочек: у нескольких задач запас равен нулю, задержка любой
+              двигает проект. Так бывает, когда задачи идут параллельно.
+            </div>
+          )}
+
           <div className="card" style={{ marginTop: 16 }}>
             <table className="table">
               <thead>
@@ -163,8 +180,8 @@ export default function SchedulePage() {
                   <th>Раннее окончание</th>
                   <th>Позднее начало</th>
                   <th>Позднее окончание</th>
-                  <th>Полный резерв</th>
-                  <th>Свободный резерв</th>
+                  <th>Запас (полный)</th>
+                  <th>Запас (свободный)</th>
                   <th>Критическая</th>
                 </tr>
               </thead>

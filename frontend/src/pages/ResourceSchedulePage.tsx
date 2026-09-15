@@ -7,15 +7,12 @@ import { useCallback, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import type {
   ResourceScheduleResponse,
   ResourceUtilizationResponse,
 } from "../types";
 import { Badge, Button, EmptyState, Skeleton, Spinner, useToast } from "../components/ui";
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
-}
 
 /** Смещение в днях → "день N" или "—". */
 function formatDay(value: number | null): string {
@@ -63,7 +60,7 @@ export default function ResourceSchedulePage() {
       setSchedule(scheduleData);
       setUtilization(utilizationData);
     } catch (error: unknown) {
-      const message = getErrorMessage(error);
+      const message = describeError(error);
       setLoadError(message);
       pushRef.current({
         tone: "error",
@@ -81,7 +78,7 @@ export default function ResourceSchedulePage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">Ресурсное расписание</h2>
+        <h2 className="page__title">План с ресурсами</h2>
         <div className="toolbar">
           <Button variant="primary" onClick={() => void calculate()} disabled={calculating}>
             {calculating ? (
@@ -93,6 +90,13 @@ export default function ResourceSchedulePage() {
             )}
           </Button>
         </div>
+      </div>
+
+      <div className="hint-panel" style={{ marginBottom: 16 }}>
+        Без ограничений задачи идут параллельно. Здесь план пересобран так, чтобы суммарная
+        потребность в каждом ресурсе не превышала его доступность в день — из-за этого задачи могут
+        начинаться позже, чем в простом плане, а «Запас (полный)» может стать отрицательным — это
+        нормально и означает, что ресурс — узкое место.
       </div>
 
       {calculating && schedule === null && (
@@ -139,7 +143,7 @@ export default function ResourceSchedulePage() {
                   <th>Задача</th>
                   <th>Факт. старт</th>
                   <th>Факт. финиш</th>
-                  <th>Задержка</th>
+                  <th>Сдвиг из-за ресурсов</th>
                   <th>Критическая</th>
                 </tr>
               </thead>
@@ -186,10 +190,16 @@ export default function ResourceSchedulePage() {
                       <span className="muted">
                         доступность {resource.availability_per_day}/день
                       </span>
-                      <Badge tone={utilizationTone(resource.peak_utilization_percent)}>
-                        пик {resource.peak_allocated} ·{" "}
-                        {Math.round(resource.peak_utilization_percent)}%
-                      </Badge>
+                      <span
+                        title={`Пик: ${resource.peak_allocated} из ${resource.availability_per_day} единиц в день ${
+                          resource.peak_day ?? "—"
+                        } — ${Math.round(resource.peak_utilization_percent)}% доступности`}
+                      >
+                        <Badge tone={utilizationTone(resource.peak_utilization_percent)}>
+                          пик {resource.peak_allocated} ·{" "}
+                          {Math.round(resource.peak_utilization_percent)}%
+                        </Badge>
+                      </span>
                     </div>
                     <div style={{ display: "flex", gap: 3, alignItems: "flex-end", flexWrap: "wrap" }}>
                       {shown.map((day) => {

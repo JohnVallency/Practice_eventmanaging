@@ -4,10 +4,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { isAxiosError } from "axios";
 import { useParams } from "react-router-dom";
 
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import type { DependencyType, Task, TaskDependency } from "../types";
 import {
   Badge,
@@ -21,6 +21,14 @@ import {
 } from "../components/ui";
 
 const DEP_TYPES: readonly DependencyType[] = ["FS", "SS", "FF", "SF"];
+
+/** Русские подписи типов связей — вместо «непонятных» FS/SS/FF/SF. */
+const DEP_TYPE_LABELS: Record<DependencyType, string> = {
+  FS: "Финиш–Старт (после окончания)",
+  SS: "Старт–Старт (одновременно)",
+  FF: "Финиш–Финиш (вместе закончить)",
+  SF: "Старт–Финиш (поздний финиш предшественника)",
+};
 
 const SELECT_STYLE: CSSProperties = {
   width: "100%",
@@ -39,21 +47,6 @@ interface DepFormState {
 }
 
 const EMPTY_DEP_FORM: DepFormState = { predecessorId: "", type: "FS", lagDays: "0" };
-
-/** Достать человекочитаемое сообщение из ошибки API (в т.ч. detail из 400). */
-function getErrorMessage(error: unknown): string {
-  if (isAxiosError(error)) {
-    const data: unknown = error.response?.data;
-    if (data !== null && typeof data === "object" && "detail" in data) {
-      const detail: unknown = (data as { detail?: unknown }).detail;
-      if (typeof detail === "string") {
-        return detail;
-      }
-    }
-    return error.message;
-  }
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
-}
 
 /** Смещение в днях → "день N" или "—". */
 function formatDay(value: number | null): string {
@@ -74,6 +67,8 @@ export default function TasksPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [calcBusy, setCalcBusy] = useState(false);
+  // Подсказка про критические задачи показывается после расчёта и остаётся на странице.
+  const [showCalcHint, setShowCalcHint] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
@@ -105,7 +100,7 @@ export default function TasksPage() {
     try {
       setTasks(await api.tasks.list(id));
     } catch (error: unknown) {
-      const message = getErrorMessage(error);
+      const message = describeError(error);
       setLoadError(message);
       pushRef.current({ tone: "error", title: "Ошибка загрузки задач", message });
     } finally {
@@ -124,7 +119,7 @@ export default function TasksPage() {
       pushRef.current({
         tone: "error",
         title: "Ошибка загрузки зависимостей",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     }
   }, []);
@@ -146,7 +141,7 @@ export default function TasksPage() {
         pushRef.current({
           tone: "error",
           title: "Ошибка загрузки зависимостей",
-          message: getErrorMessage(error),
+          message: describeError(error),
         });
       })
       .finally(() => {
@@ -167,12 +162,13 @@ export default function TasksPage() {
         title: "CPM рассчитан",
         message: `Горизонт: ${data.project_duration} дн., критических: ${data.critical_path.length}`,
       });
+      setShowCalcHint(true);
       await load();
     } catch (error: unknown) {
       pushRef.current({
         tone: "error",
         title: "Ошибка расчёта CPM",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setCalcBusy(false);
@@ -203,7 +199,7 @@ export default function TasksPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось добавить задачу",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setCreateBusy(false);
@@ -238,7 +234,7 @@ export default function TasksPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось обновить задачу",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setEditBusy(false);
@@ -277,7 +273,7 @@ export default function TasksPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось добавить зависимость",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setDepBusy(false);
@@ -294,7 +290,7 @@ export default function TasksPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось удалить зависимость",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     }
   };
@@ -314,7 +310,7 @@ export default function TasksPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось удалить задачу",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setDeleteBusy(false);
@@ -348,6 +344,18 @@ export default function TasksPage() {
           </Button>
         </div>
       </div>
+
+      {showCalcHint && (
+        <div className="hint-panel" style={{ marginBottom: 16 }}>
+          <strong>Почему задачи помечены критическими?</strong>
+          <p style={{ margin: "6px 0 0" }}>
+            Критическая задача — та, у которой нет запаса: любая задержка двигает весь проект. Если
+            задач несколько и они не связаны зависимостями, каждая может сдвинуть проект — поэтому
+            помечены все. Свяжите задачи зависимостями на странице «Граф» — и критический путь
+            станет единственным и понятным.
+          </p>
+        </div>
+      )}
 
       {loading && (
         <div className="card" style={{ display: "grid", gap: 12 }}>
@@ -403,7 +411,15 @@ export default function TasksPage() {
                 >
                   <td>{task.name}</td>
                   <td>{task.duration_days}</td>
-                  <td>{task.total_float === null ? "—" : `${task.total_float} дн.`}</td>
+                  <td>
+                    {task.total_float === null ? (
+                      "—"
+                    ) : task.total_float > 0 ? (
+                      <Badge tone="ok">{`Запас ${task.total_float} дн.`}</Badge>
+                    ) : (
+                      `${task.total_float} дн.`
+                    )}
+                  </td>
                   <td>
                     {task.actual_start === null && task.actual_finish === null
                       ? "—"
@@ -551,7 +567,7 @@ export default function TasksPage() {
                     <span style={{ flex: 1 }}>
                       {nameById.get(dep.predecessor_id) ?? dep.predecessor_id}{" "}
                       <span className="muted">
-                        ({dep.dependency_type}
+                        ({DEP_TYPE_LABELS[dep.dependency_type]}
                         {dep.lag_days !== 0 ? `, лаг ${dep.lag_days} дн.` : ""})
                       </span>
                     </span>
@@ -604,7 +620,7 @@ export default function TasksPage() {
                 >
                   {DEP_TYPES.map((type) => (
                     <option key={type} value={type}>
-                      {type}
+                      {DEP_TYPE_LABELS[type]}
                     </option>
                   ))}
                 </select>
@@ -620,6 +636,9 @@ export default function TasksPage() {
                 }
                 hint="0 — без задержки"
               />
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                Чаще всего нужен тип «Финиш–Старт». Лаг — задержка в днях, обычно 0.
+              </p>
               <Button variant="primary" onClick={() => void addDependency()} disabled={depBusy}>
                 {depBusy ? (
                   <>
@@ -656,7 +675,9 @@ export default function TasksPage() {
         }
       >
         <p style={{ marginTop: 0 }}>Удалить задачу «{deleteTask?.name ?? ""}»?</p>
-        <p className="muted">Её связи с другими задачами будут удалены вместе с ней.</p>
+        <p className="muted">
+          Связи этой задачи с другими тоже удалятся. Расписание потребуется пересчитать.
+        </p>
       </Modal>
     </section>
   );
