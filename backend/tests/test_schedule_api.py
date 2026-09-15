@@ -107,9 +107,21 @@ def test_schedule_endpoint_flow() -> None:
             body = calculated.json()
             assert body["calculated"] == 3, body
 
+            # Ответ calculate дополнен сводкой CPM: горизонт проекта и
+            # критический путь в топологическом порядке.
+            assert body["project_duration"] == 9, body
+            assert body["critical_path"] == [t1_id, t2_id, t3_id], body
+
             schedule = body["schedule"]
             assert schedule[t2_id]["earliest_start"] == 2, schedule
             assert schedule[t3_id]["earliest_start"] == 5, schedule
+
+            # Поздние величины и резервы критической головы цепочки:
+            # t1 стартует в 0; её LF = LS(t2) = 5 - 3 = 2, резерва нет.
+            assert schedule[t1_id]["is_critical"] is True, schedule
+            assert schedule[t1_id]["total_float"] == 0, schedule
+            assert schedule[t1_id]["latest_start"] == 0, schedule
+            assert schedule[t1_id]["latest_finish"] == 2, schedule
 
             # Проверка сохранения bulk-обновления в БД через GET задачи.
             # Поля CPM есть в TaskResponse, но тест не должен падать, если
@@ -121,6 +133,65 @@ def test_schedule_endpoint_flow() -> None:
             if "earliest_start" in t3_body and "earliest_finish" in t3_body:
                 assert t3_body["earliest_start"] == 5, t3_body
                 assert t3_body["earliest_finish"] == 9, t3_body
+            if "latest_start" in t3_body:
+                assert t3_body["latest_start"] == 5, t3_body
+            if "latest_finish" in t3_body:
+                assert t3_body["latest_finish"] == 9, t3_body
+            if "is_critical" in t3_body:
+                assert t3_body["is_critical"] is True, t3_body
+        finally:
+            if event_id is not None:
+                assert client.delete(f"/api/events/{event_id}").status_code == 204
+
+
+def test_critical_path_diamond() -> None:
+    """Ромб A(2), B(3), C(5), D(4) c FS-связями: критический путь A -> C -> D.
+
+    Прямой ход: EF_B = 5, EF_C = 7, ES_D = 7, EF_D = 11 => project_duration = 11.
+    Обратный ход: LS_B = 4 (TF_B = 2), поэтому критичны только A, C, D.
+    Направление POST: путь /api/tasks/{successor_id}/dependencies, где
+    successor_id в теле обязан совпадать с задачей из пути.
+    """
+    event_id: str | None = None
+    with httpx.Client(base_url=BASE_URL, timeout=10.0) as client:
+        try:
+            event_id = _create_event(client, "diamond")
+
+            a_id = _create_task(client, event_id, 2, "DA")
+            b_id = _create_task(client, event_id, 3, "DB")
+            c_id = _create_task(client, event_id, 5, "DC")
+            d_id = _create_task(client, event_id, 4, "DD")
+
+            # Зависимости: A->B, A->C, B->D, C->D (FS, лаг 0).
+            for successor_id, predecessor_id in (
+                (b_id, a_id),
+                (c_id, a_id),
+                (d_id, b_id),
+                (d_id, c_id),
+            ):
+                dep = client.post(
+                    f"/api/tasks/{successor_id}/dependencies",
+                    json=_dependency_payload(predecessor_id, successor_id),
+                )
+                assert dep.status_code == 201, dep.text
+
+            calculated = client.post(f"/api/events/{event_id}/schedule/calculate")
+            assert calculated.status_code == 200, calculated.text
+            body = calculated.json()
+
+            # Горизонт проекта и критический путь в топологическом порядке:
+            # A первый, D последний, в середине ровно C.
+            assert body["project_duration"] == 11, body
+            critical_path = body["critical_path"]
+            assert set(critical_path) == {a_id, c_id, d_id}, body
+            assert critical_path[0] == a_id, body
+            assert critical_path[-1] == d_id, body
+            assert b_id not in critical_path, body
+
+            schedule = body["schedule"]
+            assert schedule[b_id]["is_critical"] is False, schedule
+            assert schedule[b_id]["total_float"] == 2, schedule
+            assert schedule[c_id]["is_critical"] is True, schedule
         finally:
             if event_id is not None:
                 assert client.delete(f"/api/events/{event_id}").status_code == 204

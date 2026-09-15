@@ -1,6 +1,7 @@
 """Юнит-тесты чистого алгоритмического ядра расписания (CPM).
 
-Проверяют topological_sort_kahn и calculate_forward_pass из
+Проверяют topological_sort_kahn, calculate_forward_pass,
+calculate_backward_pass, calculate_floats и identify_critical_path из
 services.scheduling без БД и без API: на вход подаются dataclass-заглушки.
 Пакет services доступен благодаря pythonpath=. из backend/pytest.ini —
 тот же паттерн импорта, что и в test_schemas.py (без манипуляций sys.path).
@@ -13,7 +14,10 @@ import pytest
 
 from services.scheduling import (
     CyclicDependencyError,
+    calculate_backward_pass,
+    calculate_floats,
     calculate_forward_pass,
+    identify_critical_path,
     topological_sort_kahn,
 )
 
@@ -58,6 +62,13 @@ def _chain(durations: list[int], lag: int = 0) -> tuple[list[T], list[D]]:
     tasks = [_task(duration) for duration in durations]
     deps = [_dep(tasks[i], tasks[i + 1], "FS", lag) for i in range(len(tasks) - 1)]
     return tasks, deps
+
+
+def _diamond() -> tuple[list[T], list[D]]:
+    """Ромб A(2), B(3), C(5), D(4) с FS-связями A->B, A->C, B->D, C->D (лаг 0)."""
+    a, b, c, d = _task(2), _task(3), _task(5), _task(4)
+    deps = [_dep(a, b), _dep(a, c), _dep(b, d), _dep(c, d)]
+    return [a, b, c, d], deps
 
 
 class TestTopologicalSortKahn:
@@ -239,3 +250,224 @@ class TestCalculateForwardPass:
 
         with pytest.raises(CyclicDependencyError):
             calculate_forward_pass([a, b], deps)
+
+
+class TestCalculateBackwardPass:
+    """Обратный проход CPM: поздние старты и финишы каждой задачи.
+
+    Эталонные числа проверены вручную; горизонт проекта (project_duration)
+    задаётся явно, задачи без последователей получают LF == project_duration.
+    """
+
+    def test_fs_chain_lag_zero(self) -> None:
+        """FS lag=0: A(3)->B(2)->C(4), проект 9 => C 5/9, B 3/5, A 0/3."""
+        tasks, deps = _chain([3, 2, 4])
+        a, b, c = tasks
+
+        result = calculate_backward_pass(tasks, deps, 9)
+
+        assert result[c.id] == {"latest_start": 5, "latest_finish": 9}
+        assert result[b.id] == {"latest_start": 3, "latest_finish": 5}
+        assert result[a.id] == {"latest_start": 0, "latest_finish": 3}
+
+    def test_diamond_backward(self) -> None:
+        """Ромб, проект 11: D 7/11, C 2/7, B 4/7, A 0/2 (LF_A = min(LS_B, LS_C))."""
+        tasks, deps = _diamond()
+        a, b, c, d = tasks
+
+        result = calculate_backward_pass(tasks, deps, 11)
+
+        assert result[d.id] == {"latest_start": 7, "latest_finish": 11}
+        assert result[c.id] == {"latest_start": 2, "latest_finish": 7}
+        assert result[b.id] == {"latest_start": 4, "latest_finish": 7}
+        assert result[a.id] == {"latest_start": 0, "latest_finish": 2}
+
+    def test_fs_with_lag(self) -> None:
+        """FS lag=2: A(3)->B(2), проект 7 => LF_A = LS_B - 2 = 3, LS_A = 0."""
+        a, b = _task(3), _task(2)
+
+        result = calculate_backward_pass([a, b], [_dep(a, b, "FS", 2)], 7)
+
+        assert result[b.id] == {"latest_start": 5, "latest_finish": 7}
+        assert result[a.id] == {"latest_start": 0, "latest_finish": 3}
+
+    def test_ss_constraint(self) -> None:
+        """SS lag=1: A(1)->B(5), проект 6 => LF_A = LS_B - 1 + d_A = 1, LS_A = 0."""
+        a, b = _task(1), _task(5)
+
+        result = calculate_backward_pass([a, b], [_dep(a, b, "SS", 1)], 6)
+
+        assert result[b.id] == {"latest_start": 1, "latest_finish": 6}
+        assert result[a.id] == {"latest_start": 0, "latest_finish": 1}
+
+    def test_ff_constraint(self) -> None:
+        """FF lag=1: A(2)->B(4), проект 4 => LF_A = LF_B - 1 = 3, LS_A = 1."""
+        a, b = _task(2), _task(4)
+
+        result = calculate_backward_pass([a, b], [_dep(a, b, "FF", 1)], 4)
+
+        assert result[b.id] == {"latest_start": 0, "latest_finish": 4}
+        assert result[a.id] == {"latest_start": 1, "latest_finish": 3}
+
+    def test_sf_constraint(self) -> None:
+        """SF lag=2: A(5)->B(3), проект 5 => LS_A = LF_B - 2 + d_A - d_A = 3.
+
+        LF_A = LF_B - lag + d_A = 5 - 2 + 5 = 8 выходит за горизонт проекта,
+        поэтому ассертим поздний старт, а не поздний финиш.
+        """
+        a, b = _task(5), _task(3)
+
+        result = calculate_backward_pass([a, b], [_dep(a, b, "SF", 2)], 5)
+
+        assert result[b.id] == {"latest_start": 2, "latest_finish": 5}
+        assert result[a.id]["latest_start"] == 3
+
+    def test_task_without_successors_gets_project_duration(self) -> None:
+        """Задача без последователей получает LF == project_duration."""
+        a, b = _task(2), _task(4)
+
+        result = calculate_backward_pass([a, b], [], 10)
+
+        assert result[a.id]["latest_finish"] == 10
+        assert result[b.id]["latest_finish"] == 10
+
+    def test_empty_tasks_returns_empty_dict(self) -> None:
+        """Пустой набор задач даёт пустой словарь результата."""
+        assert calculate_backward_pass([], [], 7) == {}
+
+
+class TestCalculateFloats:
+    """Резервы времени: полный (TF = LS - ES) и свободный (FF) float.
+
+    FF = min(ES последовательателей) - EF; у задач без последователей FF = 0.
+    """
+
+    def test_diamond_floats(self) -> None:
+        """Ромб: TF A=0,B=2,C=0,D=0; FF A=0,B=2,C=0,D=0."""
+        tasks, deps = _diamond()
+        a, b, c, d = tasks
+        forward = calculate_forward_pass(tasks, deps)
+        backward = calculate_backward_pass(tasks, deps, 11)
+
+        result = calculate_floats(tasks, deps, forward, backward)
+
+        assert result[a.id]["total_float"] == 0
+        assert result[b.id]["total_float"] == 2
+        assert result[c.id]["total_float"] == 0
+        assert result[d.id]["total_float"] == 0
+        assert result[a.id]["free_float"] == 0
+        assert result[b.id]["free_float"] == 2
+        assert result[c.id]["free_float"] == 0
+        assert result[d.id]["free_float"] == 0
+
+    def test_task_without_successors_has_zero_free_float(self) -> None:
+        """Задача без последователей: FF = 0 даже при положительном TF."""
+        a, b = _task(2), _task(6)
+        forward = calculate_forward_pass([a, b], [])
+        backward = calculate_backward_pass([a, b], [], 10)
+
+        result = calculate_floats([a, b], [], forward, backward)
+
+        # TF у обеих задач положителен (горизонт 10 больше их финишей),
+        # но свободный резерв обязан быть нулём по контракту.
+        assert result[a.id]["total_float"] == 8
+        assert result[b.id]["total_float"] == 4
+        assert result[a.id]["free_float"] == 0
+        assert result[b.id]["free_float"] == 0
+
+    def test_total_float_non_negative_in_all_cases(self) -> None:
+        """TF >= 0 во всех сценариях связей (FS/SS/FF/SF с лагами) и в ромбе."""
+        cases: list[tuple[int, list[T], list[D]]] = []
+        chain_tasks, chain_deps = _chain([3, 2], 2)  # FS lag=2, проект 7
+        cases.append((7, chain_tasks, chain_deps))
+        ss_a, ss_b = _task(1), _task(5)
+        cases.append((6, [ss_a, ss_b], [_dep(ss_a, ss_b, "SS", 1)]))
+        ff_a, ff_b = _task(2), _task(4)
+        cases.append((4, [ff_a, ff_b], [_dep(ff_a, ff_b, "FF", 1)]))
+        sf_a, sf_b = _task(5), _task(3)
+        cases.append((5, [sf_a, sf_b], [_dep(sf_a, sf_b, "SF", 2)]))
+        diamond_tasks, diamond_deps = _diamond()
+        cases.append((11, diamond_tasks, diamond_deps))
+
+        for project_duration, tasks, deps in cases:
+            forward = calculate_forward_pass(tasks, deps)
+            backward = calculate_backward_pass(tasks, deps, project_duration)
+            result = calculate_floats(tasks, deps, forward, backward)
+
+            for tid, values in result.items():
+                assert values["total_float"] >= 0, (tid, values)
+
+    def test_empty_tasks_returns_empty_dict(self) -> None:
+        """Пустой набор задач даёт пустой словарь результата."""
+        assert calculate_floats([], [], {}, {}) == {}
+
+
+class TestIdentifyCriticalPath:
+    """Критический путь: задачи с нулевым полным резервом в топологическом порядке."""
+
+    def test_diamond_critical_path(self) -> None:
+        """Ромб: критичны ровно A, C, D; A первый, D последний, в середине C.
+
+        Функция не получает зависимости, поэтому внутренний порядок середины
+        не фиксируем: ассертим длину, множество и крайние позиции.
+        """
+        tasks, deps = _diamond()
+        a, b, c, d = tasks
+        forward = calculate_forward_pass(tasks, deps)
+        backward = calculate_backward_pass(tasks, deps, 11)
+        floats = calculate_floats(tasks, deps, forward, backward)
+
+        result = identify_critical_path(tasks, floats)
+
+        assert len(result) == 3
+        assert result[0] == a.id
+        assert result[-1] == d.id
+        assert set(result[1:-1]) == {c.id}
+        # B имеет TF=2 и на критическом пути стоять не может.
+        assert b.id not in result
+
+    def test_chain_critical_path(self) -> None:
+        """Цепочка A(3)->B(2)->C(4), проект 9: весь путь критичен [A, B, C]."""
+        tasks, deps = _chain([3, 2, 4])
+        a, b, c = tasks
+        forward = calculate_forward_pass(tasks, deps)
+        backward = calculate_backward_pass(tasks, deps, 9)
+        floats = calculate_floats(tasks, deps, forward, backward)
+
+        result = identify_critical_path(tasks, floats)
+
+        assert result == [a.id, b.id, c.id]
+
+    def test_all_zero_total_float_returns_all_tasks(self) -> None:
+        """Когда TF всех задач равен 0, путь — все задачи в топопорядке.
+
+        Симметричный ромб A(2),B(5),C(5),D(4) с горизонтом 11: оба плеча
+        заканчиваются в день 7, поэтому критична каждая задача. Точный
+        порядок внутри не фиксируем — проверяем корректность относительно
+        рёбер графа (предшественник строго раньше последователя).
+        """
+        a, b, c, d = _task(2), _task(5), _task(5), _task(4)
+        deps = [_dep(a, b), _dep(a, c), _dep(b, d), _dep(c, d)]
+        tasks = [a, b, c, d]
+        forward = calculate_forward_pass(tasks, deps)
+        backward = calculate_backward_pass(tasks, deps, 11)
+        floats = calculate_floats(tasks, deps, forward, backward)
+
+        result = identify_critical_path(tasks, floats)
+
+        assert set(result) == {a.id, b.id, c.id, d.id}
+        positions = {tid: index for index, tid in enumerate(result)}
+        for dep in deps:
+            assert positions[dep.predecessor_id] < positions[dep.successor_id]
+
+    def test_deterministic_across_calls(self) -> None:
+        """Два вызова на одном вводе дают идентичный список."""
+        tasks, deps = _diamond()
+        forward = calculate_forward_pass(tasks, deps)
+        backward = calculate_backward_pass(tasks, deps, 11)
+        floats = calculate_floats(tasks, deps, forward, backward)
+
+        first = identify_critical_path(tasks, floats)
+        second = identify_critical_path(tasks, floats)
+
+        assert first == second
