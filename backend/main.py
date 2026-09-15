@@ -19,6 +19,7 @@ from api.routes import (
     events_router,
     health_router,
     resources_router,
+    schedule_router,
     tasks_router,
 )
 from core.config import settings
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router)
     app.include_router(resources_router)
     app.include_router(assignments_router)
+    app.include_router(schedule_router)
 
     return app
 
