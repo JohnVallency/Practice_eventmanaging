@@ -739,3 +739,143 @@ a {
     transition: none !important;
   }
 }
+
+/* ------------------- Полировка UX: масштаб и плотность ------------------- */
+
+/* Дышащий каркас: шире контент, крупнее типографика */
+@media (min-width: 1024px) {
+  .layout__content {
+    max-width: 1280px;
+    padding: 32px 32px 64px;
+  }
+  .page__title {
+    font-size: 26px;
+  }
+  .card__title {
+    font-size: 17px;
+  }
+  body {
+    font-size: 15px;
+  }
+  .field__input {
+    font-size: 15px;
+  }
+  .grid-cards {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+  }
+  .table th,
+  .table td {
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+}
+
+/* Свободные поля-описания и списки (EventDetail, зависимость и т.п.) */
+.field--textarea textarea,
+textarea.field__input {
+  min-height: 72px;
+  resize: vertical;
+}
+
+/* Строгие списки «имя — значение» */
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.list > * + * {
+  border-top: 1px solid var(--color-border);
+}
+
+/* Блок статуса на карточке события */
+.status-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-card__error {
+  color: var(--color-danger);
+  margin: 0;
+}
+
+/* Учебная панель терминов */
+.hint-panel {
+  background: #fafaf7;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+
+.hint-panel strong {
+  color: var(--color-text);
+}
+
+/* Легенда графа и карта задач */
+.graph-legend,
+.map-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-top: 12px;
+}
+
+.graph-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-legend__line {
+  display: inline-block;
+  width: 26px;
+  height: 0;
+  border-top: 2px solid #d1d5db;
+}
+
+.graph-dependency {
+  width: 26px;
+  height: 0;
+  border-top: 2px solid #d1d5db;
+}
+
+.graph-legend__line--critical {
+  border-top-color: var(--color-danger);
+  border-top-width: 2.5px;
+}
+
+.graph-legend__node {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1.5px solid #e7e5e0;
+  background: #ffffff;
+}
+
+.graph-legend__node--critical {
+  border-color: var(--color-danger);
+  background: #fef2f2;
+}
+
+/* Плавное появление панелей узла графа */
+.fade-in {
+  animation: pageIn 200ms ease both;
+}
+
+.fade-in--slow {
+  animation: pageIn 300ms ease both;
+}
+
+/* Разметка «панель выбранной задачи» под графом */
+.graph-node-card {
+  margin-top: 16px;
+}
