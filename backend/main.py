@@ -17,11 +17,14 @@ from sqlalchemy.exc import IntegrityError
 from api.routes import (
     assignments_router,
     events_router,
+    expenses_router,
     health_router,
+    notifications_router,
     resource_schedule_router,
     resources_router,
     schedule_router,
     tasks_router,
+    venues_router,
 )
 from core.config import settings
 from core.database import dispose_engine
@@ -77,6 +80,9 @@ def create_app() -> FastAPI:
     app.include_router(assignments_router)
     app.include_router(schedule_router)
     app.include_router(resource_schedule_router)
+    app.include_router(expenses_router)
+    app.include_router(venues_router)
+    app.include_router(notifications_router)
 
     return app
 
