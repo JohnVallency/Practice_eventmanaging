@@ -26,6 +26,10 @@ class Task(Base):
     earliest_finish: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_finish: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Фактические даты после ресурсного планирования (RCPSP),
+    # в отличие от ранних/поздних дат CPM.
+    actual_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actual_finish: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_float: Mapped[int | None] = mapped_column(Integer, nullable=True)
     free_float: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_critical: Mapped[bool] = mapped_column(

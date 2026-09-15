@@ -36,5 +36,7 @@ class TaskResponse(BaseModel):
     latest_finish: int | None
     total_float: int | None
     free_float: int | None
+    actual_start: int | None = None
+    actual_finish: int | None = None
     is_critical: bool
     created_at: datetime
