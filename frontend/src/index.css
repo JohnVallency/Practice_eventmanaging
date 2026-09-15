@@ -70,6 +70,235 @@ code {
   padding: 0.1rem 0.35rem;
 }
 
+/* --- Layout / страницы (EventLMS routing) --- */
+
+.layout {
+  min-height: 100vh;
+}
+
+.layout__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  padding: 0.75rem 1.25rem;
+  background: #ffffff;
+  border-bottom: 1px solid #dfe4ee;
+}
+
+.layout__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.layout__logo {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.layout__event {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #5a6478;
+}
+
+.layout__reset {
+  border: 1px solid #dfe4ee;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+}
+
+.nav__link {
+  padding: 0.3rem 0.7rem;
+  border-radius: 8px;
+  text-decoration: none;
+  color: #1c2333;
+  font-size: 0.92rem;
+}
+
+.nav__link--active {
+  background: #3452d9;
+  color: #ffffff;
+}
+
+.layout__content {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.page__title {
+  margin: 0 0 1rem;
+  font-size: 1.4rem;
+}
+
+.page__subtitle {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.muted {
+  color: #5a6478;
+}
+
+.alert {
+  color: #b3261e;
+  background: #fdecea;
+  border: 1px solid #f3c1bd;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+
+.danger {
+  color: #b3261e;
+  font-weight: 600;
+}
+
+.actions {
+  margin: 1rem 0;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 8px;
+  background: #3452d9;
+  color: #ffffff;
+  font-size: 0.95rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button:disabled {
+  background: #9aa6c4;
+  cursor: wait;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  border: 1px solid #dfe4ee;
+  border-radius: 12px;
+  overflow: hidden;
+  font-size: 0.92rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #eef1f7;
+}
+
+.table th {
+  background: #f5f7fb;
+  font-weight: 600;
+}
+
+.table__row--click {
+  cursor: pointer;
+}
+
+.table__row--critical {
+  background: #fdecea;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #eef1f7;
+  font-size: 0.8rem;
+}
+
+.badge--critical {
+  background: #b3261e;
+  color: #ffffff;
+}
+
+.badge--unread {
+  background: #3452d9;
+  color: #ffffff;
+}
+
+.card,
+.map-placeholder {
+  background: #ffffff;
+  border: 1px solid #dfe4ee;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+}
+
+.card__fields {
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.card__fields--grid {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.card__fields dt {
+  font-size: 0.8rem;
+  color: #5a6478;
+}
+
+.card__fields dd {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.list__item {
+  background: #ffffff;
+  border: 1px solid #dfe4ee;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+
+.notifications__header {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.critical-path {
+  padding-left: 1.25rem;
+}
+
+.cpm-summary {
+  margin: 0.5rem 0;
+}
+
+.map-placeholder {
+  border-style: dashed;
+  text-align: center;
+}
+
 @media (prefers-color-scheme: dark) {
   body {
     background: #14181f;
@@ -87,5 +316,45 @@ code {
 
   code {
     background: #262c39;
+  }
+
+  .layout__header,
+  .card,
+  .map-placeholder,
+  .list__item,
+  .table {
+    background: #1d222c;
+    border-color: #2c3342;
+  }
+
+  .table th {
+    background: #14181f;
+  }
+
+  .table th,
+  .table td {
+    border-bottom-color: #262c39;
+  }
+
+  .muted,
+  .card__fields dt {
+    color: #9aa4b8;
+  }
+
+  .alert {
+    background: #3a1d1b;
+    border-color: #6b2a25;
+  }
+
+  .table__row--critical {
+    background: #3a1d1b;
+  }
+
+  .badge {
+    background: #262c39;
+  }
+
+  .nav__link {
+    color: #e6e9f0;
   }
 }
