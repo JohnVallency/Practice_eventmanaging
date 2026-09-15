@@ -17,7 +17,9 @@ from sqlalchemy.orm import aliased
 
 from core.exceptions import ValidationError
 from models import Task, TaskDependency
+from models.enums import NotificationType
 from services.event_service import EventService
+from services.notification_service import NotificationService
 from services.scheduling import (
     CyclicDependencyError,
     calculate_backward_pass,
@@ -129,6 +131,27 @@ class ScheduleService:
         if payload:
             await session.execute(sa_update(Task), payload)
         await session.flush()
+
+        # 7. Хук уведомлений: задача просрочена, если фактический финиш
+        # позже позднего (планового) финиша. Уведомления создаются в той
+        # же сессии/транзакции, что и расчёт расписания.
+        for task in tasks:
+            actual_finish = task.actual_finish
+            latest_finish = backward[task.id]["latest_finish"]
+            if actual_finish is None:
+                continue
+            if int(actual_finish) > latest_finish:
+                await NotificationService.create_notification(
+                    session,
+                    event_id,
+                    NotificationType.TASK_OVERDUE,
+                    (
+                        f"Задача «{task.name}» просрочена: фактическое "
+                        f"завершение (день {int(actual_finish)}) позже "
+                        f"планового (день {latest_finish}) на "
+                        f"{int(actual_finish) - latest_finish} дн."
+                    ),
+                )
 
         return {
             "event_id": str(event_id),
