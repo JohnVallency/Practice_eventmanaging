@@ -27,3 +27,10 @@ class DependencyType(str, enum.Enum):
     SS = "SS"  # Start-to-Start: старт последователя после старта предшественника
     FF = "FF"  # Finish-to-Finish: финиш последователя после финиша предшественника
     SF = "SF"  # Start-to-Finish: финиш последователя после старта предшественника
+
+
+class NotificationType(str, enum.Enum):
+    """Тип уведомления: просроченная задача или общая информация."""
+
+    TASK_OVERDUE = "task_overdue"
+    INFO = "info"
