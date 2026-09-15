@@ -2,11 +2,12 @@
  * Страница списка событий /events — сетка карточек с пагинацией.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Badge, EmptyState, Skeleton, useToast } from "../components/ui";
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import { useEventStore } from "../store/eventStore";
 import type { Event, EventStatus } from "../types";
 
@@ -28,10 +29,6 @@ const STATUS_TONES: Record<EventStatus, "critical" | "ok" | "warn" | "muted"> = 
   archived: "muted",
 };
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
-}
-
 function formatMoney(value: string): string {
   const num = Number(value);
   if (Number.isNaN(num)) return value;
@@ -51,7 +48,8 @@ export default function EventsPage() {
   const [skip, setSkip] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-
+  const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
+  const countsCancelled = useRef(false);
   const navigate = useNavigate();
   const setCurrentEvent = useEventStore((state) => state.setCurrentEvent);
   const toast = useToast();
@@ -66,7 +64,7 @@ export default function EventsPage() {
         setHasMore(data.length === PAGE_SIZE);
         setError(null);
       } catch (err: unknown) {
-        const message = errorMessage(err);
+        const message = describeError(err);
         setError(message);
         toast.push({ tone: "error", title: "Не удалось загрузить события", message });
       } finally {
@@ -93,6 +91,37 @@ export default function EventsPage() {
     navigate(`/events/${event.id}`);
   };
 
+  // Счётчики задач для карточек — фоновые запросы; при ошибке строка просто скрывается.
+  const requestedIds = useRef<Set<string>>(new Set());
+
+  const refreshCounts = useCallback((list: Event[]): void => {
+    for (const item of list) {
+      if (requestedIds.current.has(item.id)) continue;
+      requestedIds.current.add(item.id);
+      void api.tasks
+        .list(item.id)
+        .then((tasks) => {
+          if (countsCancelled.current) return;
+          setTaskCounts((prev) => ({ ...prev, [item.id]: tasks.length }));
+        })
+        .catch(() => {
+          // Ошибка счётчика не влияет на страницу — строка «N задач» не показывается.
+        });
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      countsCancelled.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!loading && error === null && events.length > 0) {
+      refreshCounts(events);
+    }
+  }, [events, loading, error, refreshCounts]);
+
   return (
     <section className="page">
       <div className="page__header">
@@ -117,7 +146,7 @@ export default function EventsPage() {
       {!loading && !error && events.length === 0 && (
         <EmptyState
           title="Событий пока нет"
-          hint="Создайте первое событие, чтобы начать планирование."
+          hint="Событие — это проект: праздник, конференция, ремонт. Создайте первое — внутри появятся задачи, ресурсы, бюджет."
           action={
             <button type="button" className="btn--primary" onClick={() => navigate("/events/new")}>
               Создать событие
@@ -144,6 +173,9 @@ export default function EventsPage() {
                   {formatDate(event.start_date)} — {formatDate(event.end_date)}
                 </div>
                 <div>Бюджет: {formatMoney(event.total_budget)}</div>
+                {taskCounts[event.id] !== undefined && (
+                  <div className="muted">Задач: {taskCounts[event.id]}</div>
+                )}
                 <div className="muted">Создано: {formatDate(event.created_at)}</div>
               </button>
             ))}

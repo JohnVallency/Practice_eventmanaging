@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 
 import { Field, useToast } from "../components/ui";
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import { useEventStore } from "../store/eventStore";
 import type { Event } from "../types";
 
@@ -23,10 +24,6 @@ interface ValidationErrors {
   name?: string;
   startDate?: string;
   endDate?: string;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
 
 function validate(form: FormState): ValidationErrors {
@@ -79,7 +76,7 @@ export default function CreateEventPage() {
       setCurrentEvent(created);
       navigate(`/events/${created.id}`);
     } catch (err: unknown) {
-      const message = errorMessage(err);
+      const message = describeError(err);
       setServerError(message);
       toast.push({ tone: "error", title: "Не удалось создать событие", message });
     } finally {
@@ -145,6 +142,13 @@ export default function CreateEventPage() {
             </button>
           </div>
         </form>
+      </div>
+
+      <div className="hint-panel">
+        <p>
+          Даты задают границы проекта — все планы внутри считаются в днях от начала. Бюджет нужен
+          странице «Финансы»: остаток = бюджет − расходы.
+        </p>
       </div>
     </section>
   );

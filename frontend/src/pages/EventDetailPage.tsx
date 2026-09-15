@@ -7,6 +7,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { Badge, EmptyState, Modal, Skeleton, useToast } from "../components/ui";
 import { api, ApiError } from "../services/api";
+import { describeError } from "../services/errors";
 import { useEventStore } from "../store/eventStore";
 import type { BudgetSummaryResponse, Event, EventStatus } from "../types";
 
@@ -30,10 +31,6 @@ const STATUS_TONES: Record<EventStatus, "critical" | "ok" | "warn" | "muted"> = 
   completed: "warn",
   archived: "muted",
 };
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
-}
 
 function formatMoney(value: string): string {
   const num = Number(value);
@@ -107,7 +104,7 @@ export default function EventDetailPage() {
         if (err instanceof ApiError && err.status === 404) {
           setNotFound(true);
         } else {
-          const message = errorMessage(err);
+          const message = describeError(err);
           setError(message);
           toast.push({ tone: "error", title: "Не удалось загрузить событие", message });
         }
@@ -129,7 +126,7 @@ export default function EventDetailPage() {
       setCurrentEvent(updated);
       toast.push({ tone: "ok", title: "Статус обновлён" });
     } catch (err: unknown) {
-      const message = errorMessage(err);
+      const message = describeError(err);
       toast.push({ tone: "error", title: "Не удалось обновить статус", message });
     }
   };
@@ -143,7 +140,7 @@ export default function EventDetailPage() {
       clearCurrentEvent();
       navigate("/events");
     } catch (err: unknown) {
-      const message = errorMessage(err);
+      const message = describeError(err);
       setConfirmOpen(false);
       toast.push({ tone: "error", title: "Не удалось удалить событие", message });
     } finally {
@@ -209,6 +206,15 @@ export default function EventDetailPage() {
     <section className="page">
       <div className="page__header">
         <h2 className="page__title">Событие</h2>
+      </div>
+
+      <div className="hint-panel">
+        <p>
+          Событие — контейнер проекта. Внутри вы заводите задачи, связываете их зависимостями,
+          назначаете ресурсы и ведёте бюджет. Статус — просто метка для вас: Черновик → В работе →
+          Завершён → Архив, на расчёты не влияет. Поля «Раннее/Позднее начало» на странице «План»
+          появятся после расчёта.
+        </p>
       </div>
 
       <div className="card">
@@ -329,8 +335,10 @@ export default function EventDetailPage() {
           </>
         }
       >
-        <p>
-          Удалить событие «{event.name}»? Задачи, расходы и площадки будут удалены вместе с ним.
+        <p>Удалить событие «{event.name}»?</p>
+        <p className="muted">
+          Будут удалены вместе с событием: задачи и их связи, ресурсы и назначения, расходы,
+          площадки, уведомления.
         </p>
       </Modal>
     </section>

@@ -7,6 +7,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { Field, Modal, Skeleton, useToast } from "../components/ui";
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import { useEventStore } from "../store/eventStore";
 import type { Event, EventStatus } from "../types";
 
@@ -28,10 +29,6 @@ interface FormState {
 interface ValidationErrors {
   name?: string;
   endDate?: string;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
 
 function validate(form: FormState): ValidationErrors {
@@ -83,7 +80,7 @@ export default function EditEventPage() {
         });
       })
       .catch((err: unknown) => {
-        if (!cancelled) setLoadError(errorMessage(err));
+        if (!cancelled) setLoadError(describeError(err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -140,7 +137,7 @@ export default function EditEventPage() {
       toast.push({ tone: "ok", title: "Изменения сохранены" });
       navigate(`/events/${updated.id}`);
     } catch (err: unknown) {
-      const message = errorMessage(err);
+      const message = describeError(err);
       setServerError(message);
       toast.push({ tone: "error", title: "Не удалось сохранить изменения", message });
     } finally {
@@ -157,7 +154,7 @@ export default function EditEventPage() {
       clearCurrentEvent();
       navigate("/events");
     } catch (err: unknown) {
-      const message = errorMessage(err);
+      const message = describeError(err);
       setConfirmOpen(false);
       toast.push({ tone: "error", title: "Не удалось удалить событие", message });
     } finally {
@@ -244,6 +241,13 @@ export default function EditEventPage() {
         </form>
       </div>
 
+      <div className="hint-panel">
+        <p>
+          Даты задают границы проекта — все планы внутри считаются в днях от начала. Бюджет нужен
+          странице «Финансы»: остаток = бюджет − расходы.
+        </p>
+      </div>
+
       <Modal
         open={confirmOpen}
         title="Удалить событие?"
@@ -269,8 +273,10 @@ export default function EditEventPage() {
           </>
         }
       >
-        <p>
-          Удалить событие «{form.name}»? Задачи, расходы и площадки будут удалены вместе с ним.
+        <p>Удалить событие «{form.name}»?</p>
+        <p className="muted">
+          Будут удалены вместе с событием: задачи и их связи, ресурсы и назначения, расходы,
+          площадки, уведомления.
         </p>
       </Modal>
     </section>
