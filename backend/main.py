@@ -18,6 +18,7 @@ from api.routes import (
     assignments_router,
     events_router,
     health_router,
+    resource_schedule_router,
     resources_router,
     schedule_router,
     tasks_router,
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(resources_router)
     app.include_router(assignments_router)
     app.include_router(schedule_router)
+    app.include_router(resource_schedule_router)
 
     return app
 
