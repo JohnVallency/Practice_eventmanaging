@@ -8,7 +8,8 @@
 
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
-import Layout from "./components/Layout";
+import { MainLayout } from "./layouts/MainLayout";
+import { Dashboard } from "./pages/Dashboard";
 import EventsPage from "./pages/EventsPage";
 import CreateEventPage from "./pages/CreateEventPage";
 import EventDetailPage from "./pages/EventDetailPage";
@@ -24,9 +25,9 @@ import NotificationsPage from "./pages/NotificationsPage";
 
 export const router = createBrowserRouter([
   {
-    element: <Layout />,
+    element: <MainLayout />,
     children: [
-      { path: "/", element: <Navigate to="/events" replace /> },
+      { path: "/", element: <Dashboard /> },
       { path: "/events", element: <EventsPage /> },
       { path: "/events/new", element: <CreateEventPage /> },
       { path: "/events/:id", element: <EventDetailPage /> },
@@ -39,7 +40,7 @@ export const router = createBrowserRouter([
       { path: "/events/:id/finances", element: <FinancesPage /> },
       { path: "/events/:id/map", element: <MapPage /> },
       { path: "/events/:id/notifications", element: <NotificationsPage /> },
-      { path: "*", element: <Navigate to="/events" replace /> },
+      { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
 ]);
