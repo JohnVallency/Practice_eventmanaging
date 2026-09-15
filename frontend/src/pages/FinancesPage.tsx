@@ -9,6 +9,7 @@ import { useParams } from "react-router-dom";
 
 import { EmptyState, Field, Modal, Skeleton, useToast } from "../components/ui";
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import type { BudgetSummaryResponse, Expense } from "../types";
 
 interface ExpenseFormState {
@@ -24,10 +25,6 @@ interface ValidationErrors {
   category?: string;
   amount?: string;
   date?: string;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
 
 function formatMoney(value: string): string {
@@ -83,7 +80,7 @@ export default function FinancesPage() {
         setExpenses(expensesData);
         setError(null);
       } catch (err: unknown) {
-        const message = errorMessage(err);
+        const message = describeError(err);
         setError(message);
         toast.push({ tone: "error", title: "Не удалось загрузить финансы", message });
       } finally {
@@ -129,7 +126,7 @@ export default function FinancesPage() {
       setErrors({});
       setModalOpen(false);
     } catch (err: unknown) {
-      const message = errorMessage(err);
+      const message = describeError(err);
       toast.push({ tone: "error", title: "Не удалось добавить расход", message });
     } finally {
       setSubmitting(false);
@@ -222,6 +219,11 @@ export default function FinancesPage() {
             ) : (
               <p className="muted">Бюджет не задан</p>
             )}
+          </div>
+
+          <div className="hint-panel" style={{ marginTop: 12 }}>
+            <strong>Остаток</strong> = Бюджет − Расходы. Красный прогресс-бар — бюджет превышен:
+            либо сократите расходы, либо увеличьте бюджет на карточке события («Редактировать»).
           </div>
 
           {expenses.length === 0 ? (

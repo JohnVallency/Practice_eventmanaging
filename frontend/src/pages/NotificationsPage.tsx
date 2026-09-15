@@ -8,11 +8,8 @@ import { useParams } from "react-router-dom";
 
 import { Badge, EmptyState, Skeleton, useToast } from "../components/ui";
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import type { NotificationItem } from "../types";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
-}
 
 function formatDateTime(value: string): string {
   const num = Date.parse(value);
@@ -42,7 +39,7 @@ export default function NotificationsPage() {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message = errorMessage(err);
+        const message = describeError(err);
         setError(message);
         toast.push({ tone: "error", title: "Не удалось загрузить уведомления", message });
       })

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import type { Task, TaskDependency } from "../types";
 import { Badge, Button, EmptyState, Skeleton, Spinner, useToast } from "../components/ui";
 
@@ -49,10 +50,6 @@ interface GraphLayout {
   edges: GraphEdge[];
   width: number;
   height: number;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
 
 function formatDay(value: number | null): string {
@@ -99,7 +96,7 @@ export default function EventGraphPage() {
       setTasks(data.tasks);
       setDeps(data.deps);
     } catch (error: unknown) {
-      const message = getErrorMessage(error);
+      const message = describeError(error);
       setLoadError(message);
       pushRef.current({ tone: "error", title: "Ошибка загрузки графа", message });
     } finally {
@@ -218,15 +215,15 @@ export default function EventGraphPage() {
       const data = await api.schedule.calculate(id);
       pushRef.current({
         tone: "ok",
-        title: "CPM рассчитан",
+        title: "План обновлён",
         message: `Горизонт: ${data.project_duration} дн., критических: ${data.critical_path.length}`,
       });
       await load();
     } catch (error: unknown) {
       pushRef.current({
         tone: "error",
-        title: "Ошибка расчёта CPM",
-        message: getErrorMessage(error),
+        title: "Не удалось обновить план",
+        message: describeError(error),
       });
     } finally {
       setCalcBusy(false);
@@ -250,14 +247,21 @@ export default function EventGraphPage() {
           <Button variant="ghost" onClick={() => void recalculate()} disabled={calcBusy}>
             {calcBusy ? (
               <>
-                <Spinner /> Расчёт…
+                <Spinner /> Обновление…
               </>
             ) : (
-              "Пересчитать CPM"
+              "Обновить план"
             )}
           </Button>
         </div>
       </div>
+
+      {tasks.length > 0 && deps.length === 0 && (
+        <div className="hint-panel" style={{ marginBottom: 16 }}>
+          Все задачи пока независимы: план посчитает их параллельными. Свяжите их, чтобы получить
+          цепочки. Кнопка «Зависимости» — на странице «Задачи».
+        </div>
+      )}
 
       {loading && (
         <div className="card" style={{ display: "grid", gap: 12 }}>
@@ -292,6 +296,22 @@ export default function EventGraphPage() {
 
       {layout !== null && (
         <>
+          <div className="graph-legend" aria-hidden="true">
+            <span className="graph-legend__item">
+              <span className="graph-legend__line" /> связь: после окончания →
+            </span>
+            <span className="graph-legend__item">
+              <span className="graph-legend__line graph-legend__line--critical" /> критическая цепочка
+            </span>
+            <span className="graph-legend__item">
+              <span className="graph-legend__node" /> есть запас
+            </span>
+            <span className="graph-legend__item">
+              <span className="graph-legend__node graph-legend__node--critical" /> без запаса —
+              задержка двигает проект
+            </span>
+          </div>
+
           <div className="graph-panel" style={{ overflow: "auto" }}>
             <svg
               role="img"
@@ -338,7 +358,9 @@ export default function EventGraphPage() {
                     className={isSelected ? "graph-node graph-node--selected" : "graph-node"}
                     onClick={() => setSelectedId(node.task.id)}
                   >
-                    <title>{node.task.name}</title>
+                    <title>
+                      {node.task.name} — {node.task.duration_days} дн. Кликните для деталей
+                    </title>
                     <rect
                       x={node.x}
                       y={node.y}
@@ -371,8 +393,17 @@ export default function EventGraphPage() {
             </svg>
           </div>
 
+          <div className="hint-panel" style={{ marginTop: 12 }}>
+            Граф показывает порядок работ: стрелка от предшественника к последователю. Подпись на
+            стрелке — особая связь (например, «Финиш–Финиш · 2 дн.»). Красным выделена критическая
+            цепочка — задачи без запаса: задержка любой двигает весь проект. Одиночные узлы слева —
+            задачи без зависимостей: свяжите их на странице «Задачи» → кнопка «Зависимости», чтобы
+            получить цепочку и план. Правая панель показывает детали выбранной задачи, там же кнопка
+            «Обновить план».
+          </div>
+
           {selected !== null && (
-            <div className="card" style={{ marginTop: 16, display: "grid", gap: 10 }}>
+            <div className="card graph-node-card fade-in" style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <strong>{selected.name}</strong>
                 {selected.is_critical ? (

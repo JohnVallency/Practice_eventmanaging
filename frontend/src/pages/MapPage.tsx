@@ -9,6 +9,7 @@ import { useParams } from "react-router-dom";
 
 import { EmptyState, Field, Modal, Skeleton, useToast } from "../components/ui";
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import type { Venue } from "../types";
 
 interface VenueFormState {
@@ -24,10 +25,6 @@ interface ValidationErrors {
   name?: string;
   latitude?: string;
   longitude?: string;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
 
 function formatCoord(value: number): string {
@@ -73,7 +70,7 @@ export default function MapPage() {
         setCenter(data.center);
         setError(null);
       } catch (err: unknown) {
-        const message = errorMessage(err);
+        const message = describeError(err);
         setError(message);
         toast.push({ tone: "error", title: "Не удалось загрузить карту", message });
       } finally {
@@ -117,7 +114,7 @@ export default function MapPage() {
       setModalOpen(false);
       await load(id);
     } catch (err: unknown) {
-      const message = errorMessage(err);
+      const message = describeError(err);
       toast.push({ tone: "error", title: "Не удалось добавить площадку", message });
     } finally {
       setSubmitting(false);
@@ -139,6 +136,11 @@ export default function MapPage() {
         <button type="button" className="btn--primary" onClick={() => setModalOpen(true)}>
           Добавить площадку
         </button>
+      </div>
+
+      <div className="hint-panel" style={{ marginBottom: 16 }}>
+        Площадки — точки на карте с координатами. <strong>«Центр масс»</strong> — среднее
+        географическое по площадкам: удобно как отправная точка для поиска места.
       </div>
 
       {loading && (

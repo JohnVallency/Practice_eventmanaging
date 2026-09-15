@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { api } from "../services/api";
+import { describeError } from "../services/errors";
 import type { Assignment, ResourceType, Resource, Task } from "../types";
 import {
   Badge,
@@ -58,10 +59,6 @@ interface AssignForm {
 
 const EMPTY_ASSIGN_FORM: AssignForm = { taskId: "", units: "1" };
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
-}
-
 /** "10.00" → "10", "2.50" → "2.5", мусор → "". */
 function formatAmount(value: string): string {
   const num = Number(value);
@@ -97,6 +94,10 @@ export default function ResourcesPage() {
   const [deleteResource, setDeleteResource] = useState<Resource | null>(null);
   const [deleteResourceBusy, setDeleteResourceBusy] = useState(false);
 
+  const [editResourceId, setEditResourceId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<CreateResourceForm>(EMPTY_CREATE_FORM);
+  const [editBusy, setEditBusy] = useState(false);
+
   const load = useCallback(async (): Promise<void> => {
     if (!id) {
       setLoadError("Не указан идентификатор события.");
@@ -116,7 +117,7 @@ export default function ResourcesPage() {
       setTasks(tasksData);
       setAssignments(assignmentsData.filter((a) => eventIdSet.has(a.task_id)));
     } catch (error: unknown) {
-      const message = getErrorMessage(error);
+      const message = describeError(error);
       setLoadError(message);
       pushRef.current({ tone: "error", title: "Ошибка загрузки ресурсов", message });
     } finally {
@@ -166,7 +167,7 @@ export default function ResourcesPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось добавить ресурс",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setCreateBusy(false);
@@ -176,6 +177,55 @@ export default function ResourcesPage() {
   const openAssign = (resource: Resource): void => {
     setAssignResourceId(resource.id);
     setAssignForm(EMPTY_ASSIGN_FORM);
+  };
+
+  const openEdit = (resource: Resource): void => {
+    setEditResourceId(resource.id);
+    setEditForm({
+      name: resource.name,
+      type: resource.type,
+      availability: formatAmount(resource.availability_per_day),
+      cost: formatAmount(resource.cost_per_day),
+    });
+  };
+
+  const submitEdit = async (): Promise<void> => {
+    if (!editResourceId) return;
+    const name = editForm.name.trim();
+    const availability = Number(editForm.availability);
+    const cost = Number(editForm.cost);
+    if (name.length === 0) {
+      pushRef.current({ tone: "error", title: "Укажите название ресурса" });
+      return;
+    }
+    if (!Number.isFinite(availability) || availability <= 0) {
+      pushRef.current({ tone: "error", title: "Доступность — число больше 0" });
+      return;
+    }
+    if (!Number.isFinite(cost) || cost < 0) {
+      pushRef.current({ tone: "error", title: "Стоимость — число не меньше 0" });
+      return;
+    }
+    setEditBusy(true);
+    try {
+      await api.resources.update(editResourceId, {
+        name,
+        type: editForm.type,
+        availability_per_day: availability.toFixed(2),
+        cost_per_day: cost.toFixed(2),
+      });
+      pushRef.current({ tone: "ok", title: "Ресурс обновлён", message: name });
+      setEditResourceId(null);
+      await load();
+    } catch (error: unknown) {
+      pushRef.current({
+        tone: "error",
+        title: "Не удалось обновить ресурс",
+        message: describeError(error),
+      });
+    } finally {
+      setEditBusy(false);
+    }
   };
 
   const submitAssign = async (): Promise<void> => {
@@ -203,7 +253,7 @@ export default function ResourcesPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось добавить назначение",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setAssignBusy(false);
@@ -222,7 +272,7 @@ export default function ResourcesPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось удалить назначение",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setDeleteAssignmentBusy(false);
@@ -241,7 +291,7 @@ export default function ResourcesPage() {
       pushRef.current({
         tone: "error",
         title: "Не удалось удалить ресурс",
-        message: getErrorMessage(error),
+        message: describeError(error),
       });
     } finally {
       setDeleteResourceBusy(false);
@@ -317,7 +367,18 @@ export default function ResourcesPage() {
                   {formatAmount(resource.availability_per_day)}/день ·{" "}
                   {formatAmount(resource.cost_per_day)} ₽/день
                 </div>
+                <div className="muted">
+                  Назначено на {resourceAssignments.length}{" "}
+                  {resourceAssignments.length === 1
+                    ? "задачу"
+                    : resourceAssignments.length >= 2 && resourceAssignments.length <= 4
+                      ? "задачи"
+                      : "задач"}
+                </div>
                 <div className="toolbar">
+                  <Button variant="sm" onClick={() => openEdit(resource)}>
+                    Изменить
+                  </Button>
                   <Button variant="sm" onClick={() => openAssign(resource)}>
                     Назначения
                   </Button>
@@ -365,6 +426,12 @@ export default function ResourcesPage() {
         }
       >
         <div style={{ display: "grid", gap: 12 }}>
+          <div className="hint-panel">
+            <strong>Доступность</strong> — сколько единиц ресурса доступно в день (например, 5
+            человек или 2 зала). <strong>Стоимость за день</strong> нужна странице «Финансы».
+            Назначайте ресурс на задачи кнопкой «Назначения» — указывайте, сколько единиц съедает
+            задача в день.
+          </div>
           <Field
             label="Название"
             value={createForm.name}
@@ -525,6 +592,73 @@ export default function ResourcesPage() {
       </Modal>
 
       <Modal
+        open={editResourceId !== null}
+        title="Изменение ресурса"
+        onClose={() => setEditResourceId(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditResourceId(null)}>
+              Отмена
+            </Button>
+            <Button variant="primary" onClick={() => void submitEdit()} disabled={editBusy}>
+              {editBusy ? (
+                <>
+                  <Spinner /> Сохранение…
+                </>
+              ) : (
+                "Сохранить"
+              )}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "grid", gap: 12 }}>
+          <Field
+            label="Название"
+            value={editForm.name}
+            onChange={(event) => setEditForm((form) => ({ ...form, name: event.target.value }))}
+            placeholder="Например, Сцена"
+          />
+          <Field label="Тип">
+            <select
+              value={editForm.type}
+              onChange={(event) =>
+                setEditForm((form) => ({
+                  ...form,
+                  type: event.target.value as ResourceType,
+                }))
+              }
+              style={SELECT_STYLE}
+            >
+              {RESOURCE_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {RESOURCE_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field
+            label="Доступность в день"
+            type="number"
+            min={0.01}
+            step={0.01}
+            value={editForm.availability}
+            onChange={(event) => setEditForm((form) => ({ ...form, availability: event.target.value }))}
+            hint="Больше 0, например 10"
+          />
+          <Field
+            label="Стоимость в день"
+            type="number"
+            min={0}
+            step={0.01}
+            value={editForm.cost}
+            onChange={(event) => setEditForm((form) => ({ ...form, cost: event.target.value }))}
+            hint="Не меньше 0"
+          />
+        </div>
+      </Modal>
+
+      <Modal
         open={deleteAssignment !== null}
         title="Удаление назначения"
         onClose={() => setDeleteAssignment(null)}
@@ -586,7 +720,8 @@ export default function ResourcesPage() {
         }
       >
         <p style={{ marginTop: 0 }}>
-          Удалить ресурс «{deleteResource?.name ?? ""}»? Его назначения будут удалены.
+          Удалить ресурс «{deleteResource?.name ?? ""}»? Назначения этого ресурса тоже удалятся, план
+          потребуется пересчитать.
         </p>
       </Modal>
     </section>
