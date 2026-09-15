@@ -1,83 +1,244 @@
-﻿/**
- * РЎС‚СЂР°РЅРёС†Р° СЂРµСЃСѓСЂСЃРЅРѕРіРѕ СЂР°СЃРїРёСЃР°РЅРёСЏ /events/:id/resource-schedule.
+/**
+ * Страница ресурсного расписания /events/:id/resource-schedule.
+ * Серийный SGS (RCPSP) + панель загрузки ресурсов по дням (utilization).
  */
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { api } from "../services/api";
-import type { ResourceScheduleResponse } from "../types";
+import type {
+  ResourceScheduleResponse,
+  ResourceUtilizationResponse,
+} from "../types";
+import { Badge, Button, EmptyState, Skeleton, Spinner, useToast } from "../components/ui";
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "РќРµРёР·РІРµСЃС‚РЅР°СЏ РѕС€РёР±РєР°";
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
 
+/** Смещение в днях → "день N" или "—". */
 function formatDay(value: number | null): string {
-  return value === null ? "вЂ”" : `РґРµРЅСЊ ${value}`;
+  return value === null ? "—" : `день ${value}`;
+}
+
+/** Лимит дней, отображаемых полностью; дальше — срез с "…+K дней". */
+const MAX_DAYS_SHOWN = 31;
+
+/** Порог процента загрузки: ≤ 80 muted, 80–100 warn, > 100 critical. */
+function utilizationTone(percent: number): "muted" | "warn" | "critical" {
+  if (percent > 100) {
+    return "critical";
+  }
+  if (percent >= 80) {
+    return "warn";
+  }
+  return "muted";
 }
 
 export default function ResourceSchedulePage() {
   const { id } = useParams<{ id: string }>();
-  const [schedule, setSchedule] = useState<ResourceScheduleResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { push } = useToast();
+  const pushRef = useRef(push);
+  // push может быть нестабилен между рендерами — держим его в ref для колбэков.
 
-  const calculate = (): void => {
+  const [schedule, setSchedule] = useState<ResourceScheduleResponse | null>(null);
+  const [utilization, setUtilization] = useState<ResourceUtilizationResponse | null>(null);
+  const [taskNames, setTaskNames] = useState<Record<string, string>>({});
+  const [calculating, setCalculating] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const calculate = useCallback(async (): Promise<void> => {
     if (!id) {
-      setError("РќРµ СѓРєР°Р·Р°РЅ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ СЃРѕР±С‹С‚РёСЏ.");
+      pushRef.current({ tone: "error", title: "Не указан идентификатор события" });
       return;
     }
+    setCalculating(true);
+    setLoadError(null);
+    try {
+      const tasks = await api.tasks.list(id);
+      const scheduleData = await api.resourcesSchedule.calculate(id);
+      const utilizationData = await api.resourcesSchedule.utilization(id);
+      setTaskNames(Object.fromEntries(tasks.map((task) => [task.id, task.name] as const)));
+      setSchedule(scheduleData);
+      setUtilization(utilizationData);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      setLoadError(message);
+      pushRef.current({
+        tone: "error",
+        title: "Ошибка ресурсного расчёта",
+        message,
+      });
+    } finally {
+      setCalculating(false);
+    }
+  }, [id]);
 
-    setLoading(true);
-    setError(null);
-    api.resourcesSchedule
-      .calculate(id)
-      .then((data) => setSchedule(data))
-      .catch((err: unknown) => setError(errorMessage(err)))
-      .finally(() => setLoading(false));
-  };
+  const scheduleEntries = schedule === null ? [] : Object.entries(schedule.schedule);
+  const taskIds = scheduleEntries.map(([taskId]) => taskId);
 
   return (
     <section className="page">
-      <h2 className="page__title">Р РµСЃСѓСЂСЃРЅРѕРµ СЂР°СЃРїРёСЃР°РЅРёРµ</h2>
-      {error && <p className="alert">{error}</p>}
-      <div className="actions">
-        <button type="button" className="button" onClick={calculate} disabled={loading}>
-          {loading ? "Р Р°СЃС‡С‘С‚вЂ¦" : "Р Р°СЃСЃС‡РёС‚Р°С‚СЊ"}
-        </button>
+      <div className="page__header">
+        <h2 className="page__title">Ресурсное расписание</h2>
+        <div className="toolbar">
+          <Button variant="primary" onClick={() => void calculate()} disabled={calculating}>
+            {calculating ? (
+              <>
+                <Spinner /> Расчёт…
+              </>
+            ) : (
+              "Рассчитать с ресурсами"
+            )}
+          </Button>
+        </div>
       </div>
-      {schedule && (
+
+      {calculating && schedule === null && (
+        <div className="card" style={{ display: "grid", gap: 12 }}>
+          <Skeleton w="40%" h={20} />
+          <Skeleton w="100%" h={40} />
+          <Skeleton w="100%" h={40} />
+        </div>
+      )}
+
+      {!calculating && loadError !== null && schedule === null && (
+        <EmptyState
+          title="Не удалось рассчитать ресурсное расписание"
+          hint={loadError}
+          action={
+            <Button variant="primary" onClick={() => void calculate()}>
+              Повторить
+            </Button>
+          }
+        />
+      )}
+
+      {schedule === null && loadError === null && !calculating && (
+        <EmptyState
+          title="Расписание не рассчитано"
+          hint="Нажмите «Рассчитать с ресурсами», чтобы построить план с учётом доступности ресурсов."
+        />
+      )}
+
+      {schedule !== null && taskIds.length === 0 && (
+        <EmptyState title="Нет задач" hint="Добавьте задачи, чтобы рассчитать ресурсный план." />
+      )}
+
+      {schedule !== null && taskIds.length > 0 && (
         <>
-          <p className="cpm-summary">
-            Р”Р»РёС‚РµР»СЊРЅРѕСЃС‚СЊ РїСЂРѕРµРєС‚Р° (СЃ СѓС‡С‘С‚РѕРј СЂРµСЃСѓСЂСЃРѕРІ):{" "}
-            <strong>{schedule.resource_project_duration}</strong> РґРЅ.
+          <p className="muted" style={{ fontSize: 18 }}>
+            Ресурсный горизонт: <strong>{schedule.resource_project_duration}</strong> дн.
           </p>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Р—Р°РґР°С‡Р°</th>
-                <th>Р¤Р°РєС‚РёС‡РµСЃРєРѕРµ РЅР°С‡Р°Р»Рѕ</th>
-                <th>Р¤Р°РєС‚РёС‡РµСЃРєРѕРµ РѕРєРѕРЅС‡Р°РЅРёРµ</th>
-                <th>Р—Р°РґРµСЂР¶РєР° (РґРЅ.)</th>
-                <th>РљСЂРёС‚РёС‡РµСЃРєР°СЏ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(schedule.schedule).map(([taskId, item]) => (
-                <tr key={taskId} className={item.is_critical ? "table__row--critical" : undefined}>
-                  <td>{taskId}</td>
-                  <td>{formatDay(item.actual_start)}</td>
-                  <td>{formatDay(item.actual_finish)}</td>
-                  <td>{item.delay_days}</td>
-                  <td>
-                    <span className={`badge${item.is_critical ? " badge--critical" : ""}`}>
-                      {item.is_critical ? "РґР°" : "РЅРµС‚"}
-                    </span>
-                  </td>
+
+          <div className="card">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Задача</th>
+                  <th>Факт. старт</th>
+                  <th>Факт. финиш</th>
+                  <th>Задержка</th>
+                  <th>Критическая</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {scheduleEntries.map(([taskId, item]) => (
+                  <tr
+                    key={taskId}
+                    className={item.is_critical ? "table__row--critical" : undefined}
+                  >
+                    <td>{taskNames[taskId] ?? taskId}</td>
+                    <td>{formatDay(item.actual_start)}</td>
+                    <td>{formatDay(item.actual_finish)}</td>
+                    <td className={item.delay_days > 0 ? "danger-text" : undefined}>
+                      {item.delay_days > 0 ? `+${item.delay_days} дн.` : "—"}
+                    </td>
+                    <td>
+                      {item.is_critical ? (
+                        <Badge tone="critical">да</Badge>
+                      ) : (
+                        <Badge tone="muted">нет</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Загрузка ресурсов</h3>
+          {utilization === null || utilization.resources.length === 0 ? (
+            <p className="muted">Нет данных о загрузке.</p>
+          ) : (
+            <div className="grid-cards">
+              {utilization.resources.map((resource) => {
+                const days = Object.keys(resource.allocated_by_day)
+                  .map(Number)
+                  .sort((a, b) => a - b);
+                const shown = days.slice(0, MAX_DAYS_SHOWN);
+                const hiddenCount = days.length - shown.length;
+                return (
+                  <div key={resource.resource_id} className="card" style={{ display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <strong>{resource.resource_name}</strong>
+                      <span className="muted">
+                        доступность {resource.availability_per_day}/день
+                      </span>
+                      <Badge tone={utilizationTone(resource.peak_utilization_percent)}>
+                        пик {resource.peak_allocated} ·{" "}
+                        {Math.round(resource.peak_utilization_percent)}%
+                      </Badge>
+                    </div>
+                    <div style={{ display: "flex", gap: 3, alignItems: "flex-end", flexWrap: "wrap" }}>
+                      {shown.map((day) => {
+                        const allocated = resource.allocated_by_day[String(day)] ?? 0;
+                        const percent =
+                          resource.availability_per_day > 0
+                            ? (allocated / resource.availability_per_day) * 100
+                            : 0;
+                        const over = percent > 100;
+                        return (
+                          <div
+                            key={day}
+                            title={`день ${day}: ${allocated}/${resource.availability_per_day}`}
+                            style={{
+                              width: 18,
+                              height: 64,
+                              display: "flex",
+                              alignItems: "flex-end",
+                              background: "#F3F4F6",
+                              borderRadius: 4,
+                            }}
+                          >
+                            <div
+                              className={over ? "over" : undefined}
+                              style={{
+                                width: "100%",
+                                height: `${Math.min(percent, 100)}%`,
+                                background: over ? "#DC2626" : "#111827",
+                                borderRadius: 4,
+                                transition: "width 300ms",
+                              }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {shown.length > 0
+                        ? `дни ${shown[0]}–${shown[shown.length - 1]}${
+                            hiddenCount > 0 ? `, …+${hiddenCount} дней` : ""
+                          }`
+                        : "Нет загрузки"}
+                      {resource.peak_day !== null ? ` · пик: день ${resource.peak_day}` : ""}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </>
       )}
     </section>
