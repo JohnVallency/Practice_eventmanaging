@@ -80,10 +80,17 @@ function formatDueDate(value: string | null): string {
 
 /** День в миллисекундах, масштаб оси и её вертикальное смещение над узлами. */
 const DAY_MS = 86_400_000;
-const PX_PER_DAY = 18;
+const HOUR_MS = 3_600_000;
+/** Широкий шаг между днями: один день = 60px на оси. */
+const PX_PER_DAY = 60;
 const AXIS_X0 = 150;
 const AXIS_Y = -120;
+/** Ось охватывает: (сегодня − 7 дней) … (дата мероприятия + 7 дней). */
+const AXIS_PAD_BEFORE_DAYS = 7;
+const AXIS_PAD_AFTER_DAYS = 7;
 const AXIS_MIN_SPAN_DAYS = 21;
+/** При такой экранной ширине дня на оси появляются часовые отметки со временем. */
+const AXIS_HOURS_THRESHOLD_PX = 110;
 
 function startOfDay(value: Date): Date {
   const copy = new Date(value);
@@ -95,13 +102,17 @@ function formatDateShort(value: Date): string {
   return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(value);
 }
 
+function formatTimeShort(value: Date): string {
+  return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" }).format(value);
+}
+
 interface AxisLineData extends Record<string, unknown> {
   width: number;
 }
 
 interface AxisTickData extends Record<string, unknown> {
   label: string;
-  kind: "start" | "tick" | "event";
+  kind: "start" | "tick" | "event" | "hour";
 }
 
 interface DueLineData extends Record<string, unknown> {
@@ -156,43 +167,64 @@ function buildAxisNodes(
   const lastDay = Math.min(totalDays, Math.ceil((viewRightX - AXIS_X0) / PX_PER_DAY) + 1);
   if (lastDay < firstDay) return axisNodes;
 
-  // Шаг тиков подстраивается под зум: между подписями ~90 экранных пикселей
-  const stepCandidates = [1, 2, 7, 14, 30, 60, 90, 180, 365];
-  const stepDays = stepCandidates.find((step) => step * PX_PER_DAY * zoom >= 90) ?? 365;
+  const pxPerDay = PX_PER_DAY * zoom;
+  const showHours = pxPerDay >= AXIS_HOURS_THRESHOLD_PX;
+  const seenTicks = new Set<string>();
 
-  // Дни, попадающие в кадр: сетка шага + ключевые отметки (сегодня / мероприятие)
-  const tickDays = new Set<number>();
-  for (let day = Math.ceil(firstDay / stepDays) * stepDays; day <= lastDay; day += stepDays) {
-    tickDays.add(day);
-  }
-  tickDays.add(0); // «Сегодня» — всегда
-  if (eventEnd) tickDays.add(totalDays); // Дата мероприятия — всегда
+  /** Добавляет тик; hour === 0 трактуется как дневная отметка (полночь = новый день). */
+  const pushTick = (day: number, hour: number | null): void => {
+    if (hour === 0) hour = null;
+    const key = `${day}:${hour ?? "day"}`;
+    if (seenTicks.has(key)) return;
+    seenTicks.add(key);
 
-  Array.from(tickDays)
-    .sort((a, b) => a - b)
-    .forEach((day) => {
-      const tickDate = new Date(timelineStart.getTime() + day * DAY_MS);
-      const isEvent = Boolean(eventEnd) && day === totalDays;
-      const kind: AxisTickData["kind"] = day === 0 ? "start" : isEvent ? "event" : "tick";
-      axisNodes.push({
-        id: `axis-tick-${kind}-${day}`,
-        type: "axisTick",
-        position: { x: AXIS_X0 + day * PX_PER_DAY, y: AXIS_Y },
-        data: {
-          label: isEvent
-            ? `Мероприятие · ${formatDateShort(eventEnd as Date)}`
-            : day === 0
-              ? `Сегодня · ${formatDateShort(tickDate)}`
-              : formatDateShort(tickDate),
-          kind,
-        },
-        style: { width: 2, height: 16, zIndex: 0, pointerEvents: "none" },
-        draggable: false,
-        selectable: false,
-        connectable: false,
-        deletable: false,
-      });
+    const tickDate = new Date(timelineStart.getTime() + day * DAY_MS + (hour ?? 0) * HOUR_MS);
+    const isEvent = Boolean(eventEnd) && day === totalDays && hour === null;
+    const kind: AxisTickData["kind"] = day === 0 && hour === null ? "start" : isEvent ? "event" : hour === null ? "tick" : "hour";
+    axisNodes.push({
+      id: `axis-tick-${kind}-${day}${hour !== null ? `-${hour}h` : ""}`,
+      type: "axisTick",
+      position: { x: AXIS_X0 + day * PX_PER_DAY + (hour ?? 0) * (PX_PER_DAY / 24), y: AXIS_Y },
+      data: {
+        label: isEvent
+          ? `Мероприятие · ${formatDateShort(eventEnd as Date)}`
+          : day === 0 && hour === null
+            ? `Сегодня · ${formatDateShort(tickDate)}`
+            : hour === null
+              ? formatDateShort(tickDate)
+              : formatTimeShort(tickDate),
+        kind,
+      },
+      style: { width: 2, height: 16, zIndex: 0, pointerEvents: "none" },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      deletable: false,
     });
+  };
+
+  if (!showHours) {
+    // Дневной режим: шаг подстраивается под зум; при 50+px на день подписываются все дни подряд
+    const stepCandidates = [1, 2, 3, 7, 14, 30, 60, 90, 180, 365];
+    const stepDays = stepCandidates.find((step) => step * pxPerDay >= 50) ?? 365;
+    for (let day = Math.ceil(firstDay / stepDays) * stepDays; day <= lastDay; day += stepDays) {
+      pushTick(day, null);
+    }
+  } else {
+    // Часовой режим: при увеличении на оси появляется время
+    const pxPerHour = pxPerDay / 24;
+    const hourSteps = [1, 2, 3, 6, 12];
+    const stepHours = hourSteps.find((step) => step * pxPerHour >= 45) ?? 12;
+    const firstHour = Math.max(0, firstDay * 24);
+    const lastHour = Math.min(totalDays * 24, (lastDay + 1) * 24);
+    for (let hour = Math.ceil(firstHour / stepHours) * stepHours; hour <= lastHour; hour += stepHours) {
+      pushTick(Math.floor(hour / 24), hour % 24);
+    }
+  }
+
+  // Ключевые отметки — всегда, независимо от шага
+  pushTick(0, null); // «Сегодня»
+  if (eventEnd) pushTick(totalDays, null); // Дата мероприятия
 
   return axisNodes;
 }
@@ -269,24 +301,23 @@ function calculateNodePositions(
     return { taskNodes: [], dueLineNodes: [], edges: [], categoryGroups: [], timeline: null };
   }
 
-  // Временные границы оси: сегодня / ранний дедлайн → дата мероприятия / поздний дедлайн
+  // Границы оси: (сегодня − 7 дней) … (дата мероприятия + 7 дней).
+  // Если дедлайны задач выходят за эти пределы — ось расширяется, чтобы всё было видно.
   const now = startOfDay(new Date());
+  const eventEnd = event?.end_date ? startOfDay(new Date(event.end_date)) : null;
   const dueDates = tasks
     .filter((task) => task.due_date)
     .map((task) => startOfDay(new Date(task.due_date as string)));
-  const eventEnd = event?.end_date ? startOfDay(new Date(event.end_date)) : null;
 
-  let timelineStart = now;
+  let timelineStart = new Date(now.getTime() - AXIS_PAD_BEFORE_DAYS * DAY_MS);
   dueDates.forEach((due) => {
     if (due < timelineStart) timelineStart = due;
   });
 
-  let timelineEnd = eventEnd ?? now;
+  let timelineEnd = new Date((eventEnd ?? now).getTime() + AXIS_PAD_AFTER_DAYS * DAY_MS);
   dueDates.forEach((due) => {
     if (due > timelineEnd) timelineEnd = due;
   });
-  // Дата мероприятия всегда является концом оси
-  if (eventEnd && eventEnd > timelineEnd) timelineEnd = eventEnd;
   if (timelineEnd.getTime() - timelineStart.getTime() < AXIS_MIN_SPAN_DAYS * DAY_MS) {
     timelineEnd = new Date(timelineStart.getTime() + AXIS_MIN_SPAN_DAYS * DAY_MS);
   }

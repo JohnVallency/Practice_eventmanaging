@@ -4912,6 +4912,23 @@ body[data-density="compact"] .stat-card__value {
   background: #a32817;
 }
 
+/* Часовые отметки: появляются при увеличении масштаба, подпись со временем */
+.axis-tick--hour .axis-tick__label {
+  top: -18px;
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.7);
+  padding: 0 3px;
+}
+
+.axis-tick--hour .axis-tick__rule {
+  top: 14px;
+  height: 6px;
+  width: 1px;
+  background: var(--line);
+}
+
 /* Вертикальная линия дедлайна: от оси вниз через весь план */
 .due-line {
   width: 2px;
