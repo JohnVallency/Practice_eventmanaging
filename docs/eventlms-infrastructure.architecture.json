@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Инфраструктура EventLMS",
+    "output": "eventlms-infrastructure.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "external": { "label": "Внешний клиент" },
+        "frontend": { "label": "Фронтенд" },
+        "backend": { "label": "Бэкенд" },
+        "database": { "label": "База данных" }
+      }
+    }
+  },
+  "components": [
+    {
+      "id": "users",
+      "type": "external",
+      "label": "Браузер",
+      "sublabel": "Пользователь EventLMS",
+      "pos": [30, 360],
+      "size": [120, 60]
+    },
+    {
+      "id": "frontend",
+      "type": "frontend",
+      "label": "Frontend (nginx)",
+      "sublabel": "React SPA · :80 → :5173",
+      "pos": [260, 270],
+      "size": [150, 64]
+    },
+    {
+      "id": "backend",
+      "type": "backend",
+      "label": "Backend API",
+      "sublabel": "FastAPI · uvicorn :8000",
+      "pos": [510, 360],
+      "size": [150, 64]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL 16",
+      "sublabel": "postgres:16-alpine · :5432",
+      "pos": [820, 360],
+      "size": [150, 64]
+    },
+    {
+      "id": "alembic",
+      "type": "backend",
+      "label": "Alembic",
+      "sublabel": "миграции схемы БД",
+      "pos": [640, 490],
+      "size": [150, 56]
+    },
+    {
+      "id": "volume",
+      "type": "database",
+      "label": "postgres_data",
+      "sublabel": "named volume",
+      "pos": [820, 490],
+      "size": [150, 56]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "docker compose · общая сеть",
+      "wraps": ["frontend", "backend", "postgres", "alembic", "volume"],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "users-frontend",
+      "from": "users",
+      "to": "frontend",
+      "label": "HTTP :5173",
+      "variant": "emphasis"
+    },
+    {
+      "id": "users-backend",
+      "from": "users",
+      "to": "backend",
+      "label": "REST /api"
+    },
+    {
+      "id": "backend-postgres-sql",
+      "from": "backend",
+      "to": "postgres",
+      "label": "SQL (asyncpg)"
+    },
+    {
+      "id": "alembic-postgres-ddl",
+      "from": "alembic",
+      "to": "postgres",
+      "label": "DDL",
+      "variant": "dashed"
+    },
+    {
+      "id": "postgres-volume",
+      "from": "postgres",
+      "to": "volume"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Порты и доступ",
+      "items": [
+        "SPA на :5173 (nginx :80), REST-клиент — http://localhost:8000/api",
+        "OpenAPI-документация — /docs на :8000",
+        "Postgres не публикует порт наружу — только сеть compose"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Данные",
+      "items": [
+        "Первичные ключи UUID через gen_random_uuid()",
+        "volume postgres_data хранит данные между пересозданиями",
+        "Схему БД применяют миграции Alembic (backend/alembic)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Надёжность и запуск",
+      "items": [
+        "pg_isready каждые 5 с — backend ждёт service_healthy",
+        "Образные HEALTHCHECK: GET /health (backend), wget / (frontend)",
+        "Все сервисы restart: unless-stopped; старт: docker compose up --build"
+      ]
+    }
+  ]
+}
