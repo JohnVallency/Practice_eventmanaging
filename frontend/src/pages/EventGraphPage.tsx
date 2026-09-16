@@ -77,14 +77,136 @@ function formatDueDate(value: string | null): string {
     : "Без дедлайна";
 }
 
-/** Вычисляет позицию узла на основе временной шкалы и категории */
+/** День в миллисекундах, масштаб оси и её вертикальное смещение над узлами. */
+const DAY_MS = 86_400_000;
+const PX_PER_DAY = 18;
+const AXIS_X0 = 150;
+const AXIS_Y = -120;
+const AXIS_MIN_SPAN_DAYS = 21;
+
+function startOfDay(value: Date): Date {
+  const copy = new Date(value);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
+
+function formatDateShort(value: Date): string {
+  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(value);
+}
+
+interface AxisLineData extends Record<string, unknown> {
+  width: number;
+}
+
+interface AxisTickData extends Record<string, unknown> {
+  label: string;
+  kind: "start" | "tick" | "event";
+}
+
+/** Узел графа: задача либо элемент оси таймлайна. */
+type GraphNode = TaskFlowNode | Node<AxisLineData, "axisLine"> | Node<AxisTickData, "axisTick">;
+
+/**
+ * Строит узлы оси таймлайна: линию, отметки дат и маркер даты мероприятия.
+ * Ось живёт в системе координат графа — панорамируется и зумится вместе с ним.
+ */
+function buildAxisNodes(
+  timelineStart: Date,
+  totalDays: number,
+  eventEnd: Date | null,
+): GraphNode[] {
+  const axisNodes: GraphNode[] = [
+    {
+      id: "axis-line",
+      type: "axisLine",
+      position: { x: AXIS_X0, y: AXIS_Y },
+      data: { width: Math.max(totalDays, 1) * PX_PER_DAY },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      deletable: false,
+    },
+  ];
+
+  const stepDays = totalDays > 180 ? 30 : totalDays > 90 ? 14 : totalDays > 35 ? 7 : totalDays > 14 ? 2 : 1;
+  for (let day = 0; day <= totalDays; day += stepDays) {
+    const tickDate = new Date(timelineStart.getTime() + day * DAY_MS);
+    axisNodes.push({
+      id: `axis-tick-${day}`,
+      type: "axisTick",
+      position: { x: AXIS_X0 + day * PX_PER_DAY, y: AXIS_Y },
+      data: {
+        label: day === 0 ? `Сегодня · ${formatDateShort(tickDate)}` : formatDateShort(tickDate),
+        kind: day === 0 ? "start" : "tick",
+      },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      deletable: false,
+    });
+  }
+
+  if (eventEnd) {
+    axisNodes.push({
+      id: "axis-event",
+      type: "axisTick",
+      position: { x: AXIS_X0 + totalDays * PX_PER_DAY, y: AXIS_Y - 44 },
+      data: { label: `Дата мероприятия · ${formatDateShort(eventEnd)}`, kind: "event" },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      deletable: false,
+    });
+  }
+
+  return axisNodes;
+}
+
+/**
+ * Вычисляет позицию узлов по дедлайнам и оси таймлайна.
+ * Ось начинается «сегодня» (или раньше — с самого раннего дедлайна),
+ * а заканчивается датой мероприятия; X задачи = её дедлайн на оси.
+ */
 function calculateNodePositions(
   tasks: Task[],
   dependencies: TaskDependency[],
   event: Event | null,
   selectedId: string | null,
-): { nodes: TaskFlowNode[]; edges: Edge[]; categoryGroups: CategoryGroup[] } {
+): { nodes: GraphNode[]; edges: Edge[]; categoryGroups: CategoryGroup[] } {
   if (tasks.length === 0) return { nodes: [], edges: [], categoryGroups: [] };
+
+  // Временные границы оси: сегодня / ранний дедлайн → дата мероприятия / поздний дедлайн
+  const now = startOfDay(new Date());
+  const dueDates = tasks
+    .filter((task) => task.due_date)
+    .map((task) => startOfDay(new Date(task.due_date as string)));
+  const eventEnd = event?.end_date ? startOfDay(new Date(event.end_date)) : null;
+
+  let timelineStart = now;
+  dueDates.forEach((due) => {
+    if (due < timelineStart) timelineStart = due;
+  });
+
+  let timelineEnd = eventEnd ?? now;
+  dueDates.forEach((due) => {
+    if (due > timelineEnd) timelineEnd = due;
+  });
+  // Дата мероприятия всегда является концом оси
+  if (eventEnd && eventEnd > timelineEnd) timelineEnd = eventEnd;
+  if (timelineEnd.getTime() - timelineStart.getTime() < AXIS_MIN_SPAN_DAYS * DAY_MS) {
+    timelineEnd = new Date(timelineStart.getTime() + AXIS_MIN_SPAN_DAYS * DAY_MS);
+  }
+
+  const totalDays = Math.max(
+    1,
+    Math.round((timelineEnd.getTime() - timelineStart.getTime()) / DAY_MS),
+  );
+  const xForDate = (date: Date): number => {
+    const days = (date.getTime() - timelineStart.getTime()) / DAY_MS;
+    return AXIS_X0 + days * PX_PER_DAY;
+  };
+
+  const axisNodes = buildAxisNodes(timelineStart, totalDays, eventEnd);
 
   // Группируем задачи по категориям
   const byCategory = new Map<string | null, Task[]>();
@@ -93,27 +215,6 @@ function calculateNodePositions(
     byCategory.set(category, [...(byCategory.get(category) ?? []), task]);
   });
 
-  // Определяем временные границы
-  const allEarliestStarts = tasks.map((t) => t.earliest_start).filter((s): s is number => s !== null);
-  const allEarliestFinishes = tasks.map((t) => t.earliest_finish).filter((f): f is number => f !== null);
-  
-  let minTime = 0;
-  let maxTime = 0;
-  
-  if (allEarliestStarts.length > 0) {
-    minTime = Math.min(...allEarliestStarts);
-  }
-  if (allEarliestFinishes.length > 0) {
-    maxTime = Math.max(...allEarliestFinishes);
-  }
-  if (event?.end_date) {
-    const endDate = new Date(event.end_date).getTime();
-    const startDate = event.start_date ? new Date(event.start_date).getTime() : endDate;
-    const durationDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-    maxTime = Math.max(maxTime, durationDays);
-  }
-  
-  const timeRange = maxTime - minTime || 1;
   const categories = Array.from(byCategory.keys());
   const categoryHeight = 220;
   const verticalSpacing = 60;
@@ -145,10 +246,9 @@ function calculateNodePositions(
     }
     
     categoryTasks.forEach((task, taskIndex) => {
-      // Позиция X основана на времени (earliest_start)
-      const taskTime = task.earliest_start ?? task.earliest_finish ?? 0;
-      const normalizedTime = (taskTime - minTime) / timeRange;
-      const x = normalizedTime * 1100 + 150; // Масштабируем на ширину графа
+      // Позиция X привязана к дедлайну задачи на оси таймлайна
+      const taskDate = task.due_date ? startOfDay(new Date(task.due_date)) : timelineStart;
+      const x = xForDate(taskDate);
       
       // Позиция Y основана на категории и индексе задачи
       const y = yStart + 30 + taskIndex * 170;
@@ -198,7 +298,7 @@ function calculateNodePositions(
       };
     });
 
-  return { nodes: taskNodes, edges: taskEdges, categoryGroups };
+  return { nodes: [...axisNodes, ...taskNodes], edges: taskEdges, categoryGroups };
 }
 
 function TaskNode({ data }: NodeProps<TaskFlowNode>): JSX.Element {
@@ -240,7 +340,24 @@ function TaskNode({ data }: NodeProps<TaskFlowNode>): JSX.Element {
   );
 }
 
-const nodeTypes = { task: TaskNode };
+const nodeTypes = { task: TaskNode, axisLine: AxisLineNode, axisTick: AxisTickNode };
+
+/** Горизонтальная линия таймлайна в координатах графа. */
+function AxisLineNode({ data }: NodeProps): JSX.Element {
+  const { width } = data as unknown as AxisLineData;
+  return <div className="axis-line" style={{ width }} />;
+}
+
+/** Отметка даты на оси: обычный тик, «сегодня» или маркер даты мероприятия. */
+function AxisTickNode({ data }: NodeProps): JSX.Element {
+  const { label, kind } = data as unknown as AxisTickData;
+  return (
+    <div className={`axis-tick axis-tick--${kind}`}>
+      <span className="axis-tick__label">{label}</span>
+      <span className="axis-tick__rule" />
+    </div>
+  );
+}
 
 export default function EventGraphPage() {
   const { id } = useParams<{ id: string }>();
@@ -254,7 +371,7 @@ export default function EventGraphPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [calcBusy, setCalcBusy] = useState(false);
-  const [nodes, setNodes] = useState<TaskFlowNode[]>([]);
+  const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [categoryGroups, setCategoryGroups] = useState<CategoryGroup[]>([]);
   /** Идентификатор выбранного ребра — открывает управление связью. */
@@ -298,7 +415,7 @@ export default function EventGraphPage() {
   }, [load]);
 
   const graphModel = useMemo(() => {
-    if (tasks.length === 0) return { nodes: [] as TaskFlowNode[], edges: [] as Edge[], categoryGroups: [] as CategoryGroup[] };
+    if (tasks.length === 0) return { nodes: [] as GraphNode[], edges: [] as Edge[], categoryGroups: [] as CategoryGroup[] };
     // Используем новую функцию для расчета позиций на основе времени и категорий
     return calculateNodePositions(tasks, deps, event, selectedId);
   }, [deps, event, selectedId, tasks]);
@@ -478,6 +595,7 @@ export default function EventGraphPage() {
                 edges={edges}
                 nodeTypes={nodeTypes}
                 onNodeClick={(_, node) => {
+                  if (node.type !== "task") return;
                   setSelectedId(node.id);
                   setSelectedEdgeId(null);
                 }}
@@ -500,14 +618,12 @@ export default function EventGraphPage() {
                 <Background gap={24} size={1} color={CANVAS_GRID} />
                 <Controls position="bottom-left" showInteractive={false} />
                 <MiniMap
-                  nodeColor={(node) => STATUS_COLORS[(node.data as TaskNodeData).task.status]}
+                  nodeColor={(node) => {
+                    const data = node.data as TaskNodeData | undefined;
+                    return data?.task ? STATUS_COLORS[data.task.status] : "#c6b9a2";
+                  }}
                   maskColor={CANVAS_MASK}
                 />
-                {/* Временная шкала */}
-                <div className="timeline-axis">
-                  <span className="timeline-axis__start">Начало</span>
-                  <span className="timeline-axis__end">{event?.end_date ? new Date(event.end_date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : 'Дата мероприятия'}</span>
-                </div>
                 {/* Фоны категорий */}
                 {categoryGroups.map((group) => (
                   <div
