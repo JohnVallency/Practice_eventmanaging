@@ -9,6 +9,7 @@ import {
   MiniMap,
   Position,
   ReactFlow,
+  useViewport,
   type Edge,
   type Node,
   type NodeProps,
@@ -117,20 +118,32 @@ type GraphNode =
 
 /**
  * Строит узлы оси таймлайна: линию, отметки дат и маркер даты мероприятия.
- * Ось живёт в системе координат графа — панорамируется и зумится вместе с ним.
+ * Ось живёт в системе координат графа — панорамируется и зумится вместе с ним,
+ * но линия всегда натянута от левого до правого края видимой области окна графа,
+ * а шаг тиков подстраивается под масштаб (запас ±500px не даёт линии «дышать» при пане).
  */
 function buildAxisNodes(
   timelineStart: Date,
   totalDays: number,
   eventEnd: Date | null,
+  viewLeftX: number,
+  viewRightX: number,
+  zoom: number,
 ): GraphNode[] {
+  const timelineRightX = AXIS_X0 + Math.max(totalDays, 1) * PX_PER_DAY;
+
+  // Линия оси: от левого края окна до правого (в координатах графа)
+  const lineLeft = Math.min(viewLeftX, AXIS_X0) - 500;
+  const lineRight = Math.max(viewRightX, timelineRightX) + 500;
+  const lineWidth = lineRight - lineLeft;
+
   const axisNodes: GraphNode[] = [
     {
       id: "axis-line",
       type: "axisLine",
-      position: { x: AXIS_X0, y: AXIS_Y },
-      data: { width: Math.max(totalDays, 1) * PX_PER_DAY },
-      style: { width: Math.max(totalDays, 1) * PX_PER_DAY, height: 4, zIndex: 0 },
+      position: { x: lineLeft, y: AXIS_Y },
+      data: { width: lineWidth },
+      style: { width: lineWidth, height: 4, zIndex: 0, pointerEvents: "none" },
       draggable: false,
       selectable: false,
       connectable: false,
@@ -138,38 +151,48 @@ function buildAxisNodes(
     },
   ];
 
-  const stepDays = totalDays > 180 ? 30 : totalDays > 90 ? 14 : totalDays > 35 ? 7 : totalDays > 14 ? 2 : 1;
-  for (let day = 0; day <= totalDays; day += stepDays) {
-    const tickDate = new Date(timelineStart.getTime() + day * DAY_MS);
-    axisNodes.push({
-      id: `axis-tick-${day}`,
-      type: "axisTick",
-      position: { x: AXIS_X0 + day * PX_PER_DAY, y: AXIS_Y },
-      data: {
-        label: day === 0 ? `Сегодня · ${formatDateShort(tickDate)}` : formatDateShort(tickDate),
-        kind: day === 0 ? "start" : "tick",
-      },
-      style: { width: 2, height: 16, zIndex: 0 },
-      draggable: false,
-      selectable: false,
-      connectable: false,
-      deletable: false,
-    });
-  }
+  // Видимый диапазон дней на оси (с запасом в один день с каждой стороны)
+  const firstDay = Math.max(0, Math.floor((viewLeftX - AXIS_X0) / PX_PER_DAY) - 1);
+  const lastDay = Math.min(totalDays, Math.ceil((viewRightX - AXIS_X0) / PX_PER_DAY) + 1);
+  if (lastDay < firstDay) return axisNodes;
 
-  if (eventEnd) {
-    axisNodes.push({
-      id: "axis-event",
-      type: "axisTick",
-      position: { x: AXIS_X0 + totalDays * PX_PER_DAY, y: AXIS_Y - 44 },
-      data: { label: `Дата мероприятия · ${formatDateShort(eventEnd)}`, kind: "event" },
-      style: { width: 2, height: 16, zIndex: 0 },
-      draggable: false,
-      selectable: false,
-      connectable: false,
-      deletable: false,
-    });
+  // Шаг тиков подстраивается под зум: между подписями ~90 экранных пикселей
+  const stepCandidates = [1, 2, 7, 14, 30, 60, 90, 180, 365];
+  const stepDays = stepCandidates.find((step) => step * PX_PER_DAY * zoom >= 90) ?? 365;
+
+  // Дни, попадающие в кадр: сетка шага + ключевые отметки (сегодня / мероприятие)
+  const tickDays = new Set<number>();
+  for (let day = Math.ceil(firstDay / stepDays) * stepDays; day <= lastDay; day += stepDays) {
+    tickDays.add(day);
   }
+  tickDays.add(0); // «Сегодня» — всегда
+  if (eventEnd) tickDays.add(totalDays); // Дата мероприятия — всегда
+
+  Array.from(tickDays)
+    .sort((a, b) => a - b)
+    .forEach((day) => {
+      const tickDate = new Date(timelineStart.getTime() + day * DAY_MS);
+      const isEvent = Boolean(eventEnd) && day === totalDays;
+      const kind: AxisTickData["kind"] = day === 0 ? "start" : isEvent ? "event" : "tick";
+      axisNodes.push({
+        id: `axis-tick-${kind}-${day}`,
+        type: "axisTick",
+        position: { x: AXIS_X0 + day * PX_PER_DAY, y: AXIS_Y },
+        data: {
+          label: isEvent
+            ? `Мероприятие · ${formatDateShort(eventEnd as Date)}`
+            : day === 0
+              ? `Сегодня · ${formatDateShort(tickDate)}`
+              : formatDateShort(tickDate),
+          kind,
+        },
+        style: { width: 2, height: 16, zIndex: 0, pointerEvents: "none" },
+        draggable: false,
+        selectable: false,
+        connectable: false,
+        deletable: false,
+      });
+    });
 
   return axisNodes;
 }
@@ -206,7 +229,7 @@ function buildDueLines(
       type: "dueLine",
       position: { x: xForDate(new Date(timelineStart.getTime() + day * DAY_MS)), y: AXIS_Y },
       data: { height: Math.max(maxNodeBottom - AXIS_Y + 30, 200), overdue: entry.overdue },
-      style: { width: 2, height: Math.max(maxNodeBottom - AXIS_Y + 30, 200), zIndex: 0 },
+      style: { width: 2, height: Math.max(maxNodeBottom - AXIS_Y + 30, 200), zIndex: 1 },
       draggable: false,
       selectable: false,
       connectable: false,
@@ -214,6 +237,21 @@ function buildDueLines(
     });
   });
   return lines;
+}
+
+interface AxisModel {
+  start: Date;
+  totalDays: number;
+  eventEnd: Date | null;
+}
+
+interface GraphModel {
+  taskNodes: TaskFlowNode[];
+  dueLineNodes: GraphNode[];
+  edges: Edge[];
+  categoryGroups: CategoryGroup[];
+  /** Границы оси: нужны компоненту, чтобы растянуть линию по всей ширине окна. */
+  timeline: AxisModel | null;
 }
 
 /**
@@ -226,8 +264,10 @@ function calculateNodePositions(
   dependencies: TaskDependency[],
   event: Event | null,
   selectedId: string | null,
-): { nodes: GraphNode[]; edges: Edge[]; categoryGroups: CategoryGroup[] } {
-  if (tasks.length === 0) return { nodes: [], edges: [], categoryGroups: [] };
+): GraphModel {
+  if (tasks.length === 0) {
+    return { taskNodes: [], dueLineNodes: [], edges: [], categoryGroups: [], timeline: null };
+  }
 
   // Временные границы оси: сегодня / ранний дедлайн → дата мероприятия / поздний дедлайн
   const now = startOfDay(new Date());
@@ -259,8 +299,6 @@ function calculateNodePositions(
     const days = (date.getTime() - timelineStart.getTime()) / DAY_MS;
     return AXIS_X0 + days * PX_PER_DAY;
   };
-
-  const axisNodes = buildAxisNodes(timelineStart, totalDays, eventEnd);
 
   // Группируем задачи по категориям
   const byCategory = new Map<string | null, Task[]>();
@@ -307,7 +345,8 @@ function calculateNodePositions(
       // Позиция Y основана на категории и индексе задачи
       const y = yStart + 30 + taskIndex * 170;
       
-      taskNodes.push({
+      // Задачи всегда рисуются поверх рёбер (zIndex: 10) — стрелки не «окутывают» карточки
+  taskNodes.push({
         id: task.id,
         type: "task",
         position: { x, y },
@@ -320,6 +359,7 @@ function calculateNodePositions(
         style: {
           borderColor: category ? CATEGORY_COLORS[category] ?? "#c6b9a2" : undefined,
         },
+        zIndex: 10,
       });
     });
   });
@@ -347,8 +387,9 @@ function calculateNodePositions(
             : `${dependency.dependency_type} +${dependency.lag_days}`,
         labelStyle: { fill: "#877c6d", fontSize: 11, fontWeight: 600 },
         labelBgStyle: { fill: "#faf5ec", fillOpacity: 0.95 },
-        style: { stroke, strokeWidth: critical ? 2.5 : 1.5 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+        style: { stroke, strokeWidth: critical ? 2 : 1.2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 16, height: 16 },
+        zIndex: 0,
       };
     });
 
@@ -356,7 +397,13 @@ function calculateNodePositions(
   const maxNodeBottom = taskNodes.reduce((max, node) => Math.max(max, node.position.y + 190), 0);
   const dueLines = buildDueLines(tasks, timelineStart, timelineEnd, xForDate, maxNodeBottom);
 
-  return { nodes: [...axisNodes, ...dueLines, ...taskNodes], edges: taskEdges, categoryGroups };
+  return {
+    taskNodes,
+    dueLineNodes: dueLines,
+    edges: taskEdges,
+    categoryGroups,
+    timeline: { start: timelineStart, totalDays, eventEnd },
+  };
 }
 
 function TaskNode({ data }: NodeProps<TaskFlowNode>): JSX.Element {
@@ -423,6 +470,23 @@ function DueLineNode({ data }: NodeProps): JSX.Element {
   return <div className={`due-line ${overdue ? "due-line--overdue" : ""}`} style={{ height }} />;
 }
 
+/** Трекер вьюпорта: сообщает странице текущие pan/zoom, чтобы ось следовала за масштабом. */
+function ViewportTracker({
+  onChange,
+}: {
+  onChange: (viewport: { x: number; y: number; zoom: number }) => void;
+}): JSX.Element | null {
+  const viewport = useViewport();
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  useEffect(() => {
+    onChangeRef.current(viewport);
+  }, [viewport]);
+  return null;
+}
+
 export default function EventGraphPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -441,6 +505,22 @@ export default function EventGraphPage() {
   /** Идентификатор выбранного ребра — открывает управление связью. */
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [depBusy, setDepBusy] = useState(false);
+  /** Вьюпорт графа: ось пересобирается под видимую область при пане/зуме. */
+  const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
+  /** Ширина окна графа — ось тянется от его левого до правого края. */
+  const [flowPanel, setFlowPanel] = useState<HTMLDivElement | null>(null);
+  const [flowWidth, setFlowWidth] = useState(1200);
+
+  useEffect(() => {
+    if (!flowPanel) return;
+    setFlowWidth(flowPanel.clientWidth);
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width && width > 0) setFlowWidth(width);
+    });
+    observer.observe(flowPanel);
+    return () => observer.disconnect();
+  }, [flowPanel]);
 
   useEffect(() => {
     pushRef.current = push;
@@ -479,16 +559,27 @@ export default function EventGraphPage() {
   }, [load]);
 
   const graphModel = useMemo(() => {
-    if (tasks.length === 0) return { nodes: [] as GraphNode[], edges: [] as Edge[], categoryGroups: [] as CategoryGroup[] };
+    if (tasks.length === 0) {
+      return { taskNodes: [], dueLineNodes: [], edges: [], categoryGroups: [], timeline: null } as GraphModel;
+    }
     // Используем новую функцию для расчета позиций на основе времени и категорий
     return calculateNodePositions(tasks, deps, event, selectedId);
   }, [deps, event, selectedId, tasks]);
 
+  /** Ось таймлайна: тянется по всей ширине окна графа и движется вместе с зумом. */
+  const axisNodes = useMemo(() => {
+    const timeline = graphModel.timeline;
+    if (!timeline) return [] as GraphNode[];
+    const viewLeftX = -viewport.x / viewport.zoom;
+    const viewRightX = (flowWidth - viewport.x) / viewport.zoom;
+    return buildAxisNodes(timeline.start, timeline.totalDays, timeline.eventEnd, viewLeftX, viewRightX, viewport.zoom);
+  }, [flowWidth, graphModel, viewport]);
+
   useEffect(() => {
-    setNodes(graphModel.nodes);
+    setNodes([...axisNodes, ...graphModel.dueLineNodes, ...graphModel.taskNodes]);
     setEdges(graphModel.edges);
     setCategoryGroups(graphModel.categoryGroups);
-  }, [graphModel]);
+  }, [axisNodes, graphModel]);
 
   const selected = useMemo(
     () => tasks.find((task) => task.id === selectedId) ?? null,
@@ -653,11 +744,13 @@ export default function EventGraphPage() {
           </div>
 
           <div className="graph-container graph-container--flow">
-            <div className="graph-flow-panel">
+            <div className="graph-flow-panel" ref={setFlowPanel}>
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                connectionRadius={28}
+                zoomOnDoubleClick={false}
                 onNodeClick={(_, node) => {
                   if (node.type !== "task") return;
                   setSelectedId(node.id);
@@ -679,6 +772,7 @@ export default function EventGraphPage() {
                 elevateEdgesOnSelect
                 proOptions={{ hideAttribution: true }}
               >
+                <ViewportTracker onChange={setViewport} />
                 <Background gap={24} size={1} color={CANVAS_GRID} />
                 <Controls position="bottom-left" showInteractive={false} />
                 <MiniMap
