@@ -14,6 +14,9 @@ from schemas import (
     TaskCreate,
     TaskDependencyCreate,
     TaskDependencyResponse,
+    TaskCommentCreate,
+    TaskCommentResponse,
+    TaskHistoryResponse,
     TaskResponse,
     TaskUpdate,
 )
@@ -50,6 +53,9 @@ async def list_tasks(
     event_id: uuid.UUID | None = Query(default=None, description="Фильтр по событию"),
     skip: int = Query(default=0, ge=0, description="Сколько записей пропустить"),
     limit: int = Query(default=50, ge=1, le=100, description="Размер страницы"),
+    task_status: str | None = Query(default=None, alias="status"),
+    priority: str | None = Query(default=None),
+    assignee: str | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> list[TaskResponse]:
     """Получить список задач с фильтром по событию и пагинацией.
@@ -63,7 +69,15 @@ async def list_tasks(
     Returns:
         list[TaskResponse]: страница списка задач.
     """
-    tasks = await TaskService.list(session, event_id=event_id, skip=skip, limit=limit)
+    tasks = await TaskService.list(
+        session,
+        event_id=event_id,
+        skip=skip,
+        limit=limit,
+        status=task_status,
+        priority=priority,
+        assignee=assignee,
+    )
     return [TaskResponse.model_validate(task) for task in tasks]
 
 
@@ -171,6 +185,21 @@ async def update_task(
     """
     task = await TaskService.update(session, task_id, data)
     return TaskResponse.model_validate(task)
+
+
+@router.get("/{task_id}/comments", response_model=list[TaskCommentResponse], summary="Комментарии задачи")
+async def list_comments(task_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> list[TaskCommentResponse]:
+    return [TaskCommentResponse.model_validate(item) for item in await TaskService.comments(session, task_id)]
+
+
+@router.post("/{task_id}/comments", response_model=TaskCommentResponse, status_code=status.HTTP_201_CREATED, summary="Добавить комментарий")
+async def add_comment(task_id: uuid.UUID, data: TaskCommentCreate, session: AsyncSession = Depends(get_session)) -> TaskCommentResponse:
+    return TaskCommentResponse.model_validate(await TaskService.add_comment(session, task_id, data.body, data.author))
+
+
+@router.get("/{task_id}/history", response_model=list[TaskHistoryResponse], summary="История задачи")
+async def list_history(task_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> list[TaskHistoryResponse]:
+    return [TaskHistoryResponse.model_validate(item) for item in await TaskService.history(session, task_id)]
 
 
 @router.delete(

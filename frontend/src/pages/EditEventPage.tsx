@@ -10,6 +10,7 @@ import { api } from "../services/api";
 import { describeError } from "../services/errors";
 import { useEventStore } from "../store/eventStore";
 import type { Event, EventStatus } from "../types";
+import { zonedLocalToIso } from "../utils/date";
 
 const STATUS_OPTIONS: Array<{ value: EventStatus; label: string }> = [
   { value: "draft", label: "Черновик" },
@@ -22,13 +23,26 @@ interface FormState {
   name: string;
   startDate: string;
   endDate: string;
+  startTime: string;
+  endTime: string;
+  timezone: string;
   budget: string;
   status: EventStatus;
+  description: string;
+  venueName: string;
+  venueAddress: string;
+  venueRoom: string;
+  onlineUrl: string;
+  organizerName: string;
+  organizerContact: string;
+  maxParticipants: string;
+  color: string;
 }
 
 interface ValidationErrors {
   name?: string;
   endDate?: string;
+  maxParticipants?: string;
 }
 
 function validate(form: FormState): ValidationErrors {
@@ -36,8 +50,11 @@ function validate(form: FormState): ValidationErrors {
   if (form.name.trim() === "") {
     errors.name = "Введите название события";
   }
-  if (form.startDate !== "" && form.endDate !== "" && form.endDate <= form.startDate) {
+  if (form.startDate !== "" && form.endDate !== "" && `${form.endDate}T${form.endTime}` <= `${form.startDate}T${form.startTime}`) {
     errors.endDate = "Дата окончания должна быть позже даты начала";
+  }
+  if (form.maxParticipants.trim() !== "" && (Number.isNaN(Number(form.maxParticipants)) || Number(form.maxParticipants) < 1)) {
+    errors.maxParticipants = "Максимальное количество участников должно быть не меньше 1";
   }
   return errors;
 }
@@ -75,8 +92,20 @@ export default function EditEventPage() {
           name: data.name,
           startDate: data.start_date.slice(0, 10),
           endDate: data.end_date.slice(0, 10),
+          startTime: data.start_date.slice(11, 16),
+          endTime: data.end_date.slice(11, 16),
+          timezone: data.timezone ?? "Europe/Moscow",
           budget: data.total_budget,
           status: data.status,
+          description: data.description ?? "",
+          venueName: data.venue_name ?? "",
+          venueAddress: data.venue_address ?? "",
+          venueRoom: data.venue_room ?? "",
+          onlineUrl: data.online_url ?? "",
+          organizerName: data.organizer_name ?? "",
+          organizerContact: data.organizer_contact ?? "",
+          maxParticipants: data.max_participants ? String(data.max_participants) : "",
+          color: data.color ?? "#E1A24A",
         });
       })
       .catch((err: unknown) => {
@@ -126,8 +155,18 @@ export default function EditEventPage() {
     try {
       const updated = await api.events.update(id, {
         name: form.name.trim(),
-        start_date: `${form.startDate}T00:00:00Z`,
-        end_date: `${form.endDate}T00:00:00Z`,
+        start_date: zonedLocalToIso(`${form.startDate}T${form.startTime}`, form.timezone),
+        end_date: zonedLocalToIso(`${form.endDate}T${form.endTime}`, form.timezone),
+        description: form.description,
+        timezone: form.timezone,
+        venue_name: form.venueName || null,
+        venue_address: form.venueAddress || null,
+        venue_room: form.venueRoom || null,
+        online_url: form.onlineUrl || null,
+        organizer_name: form.organizerName || null,
+        organizer_contact: form.organizerContact || null,
+        max_participants: form.maxParticipants ? Number(form.maxParticipants) : null,
+        color: form.color,
         status: form.status,
         total_budget:
           form.budget.trim() === "" ? "0.00" : Number(form.budget).toFixed(2),
@@ -165,11 +204,13 @@ export default function EditEventPage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">Редактирование события</h2>
+        <div><div className="eyebrow">Event settings</div><h2 className="page__title">Настроить событие</h2><p className="event-config-subtitle">Обновите расписание, площадку и параметры команды.</p></div>
       </div>
 
-      <div className="card">
+      <div className="event-config-card">
+        <div className="event-config-card__head"><div><strong>Конфигурация события</strong><span>Изменения сохраняются в рабочем плане и календаре.</span></div><span className="event-config-card__step">01 / 03</span></div>
         <form onSubmit={(e) => void handleSave(e)} noValidate>
+          <div className="event-form-section-title event-form-section-title--first">Расписание и бюджет</div>
           <Field
             label="Название"
             required
@@ -184,6 +225,7 @@ export default function EditEventPage() {
             value={form.startDate}
             onChange={(e) => patch({ startDate: e.target.value })}
           />
+          <div className="event-form-grid event-form-grid--schedule"><Field label="Время начала" type="time" required value={form.startTime} onChange={(e) => patch({ startTime: e.target.value })} /><Field label="Время окончания" type="time" required value={form.endTime} onChange={(e) => patch({ endTime: e.target.value })} /></div>
           <Field
             label="Дата окончания"
             type="date"
@@ -214,6 +256,16 @@ export default function EditEventPage() {
               ))}
             </select>
           </Field>
+
+          <Field label="Часовой пояс" value={form.timezone} onChange={(e) => patch({ timezone: e.target.value })} />
+          <div className="field field--textarea"><label className="field__label" htmlFor="event-description">Описание события</label><textarea id="event-description" className="field__input" rows={4} value={form.description} onChange={(e) => patch({ description: e.target.value })} /></div>
+          <div className="event-form-section-title">Площадка и доступ</div>
+          <div className="event-form-grid"><Field label="Площадка" value={form.venueName} onChange={(e) => patch({ venueName: e.target.value })} /><Field label="Зал / аудитория" value={form.venueRoom} onChange={(e) => patch({ venueRoom: e.target.value })} /></div>
+          <Field label="Адрес площадки" value={form.venueAddress} onChange={(e) => patch({ venueAddress: e.target.value })} />
+          <Field label="Онлайн-ссылка" type="url" value={form.onlineUrl} onChange={(e) => patch({ onlineUrl: e.target.value })} />
+          <div className="event-form-section-title">Организация</div>
+          <div className="event-form-grid"><Field label="Ответственный" value={form.organizerName} onChange={(e) => patch({ organizerName: e.target.value })} /><Field label="Контакт" value={form.organizerContact} onChange={(e) => patch({ organizerContact: e.target.value })} /></div>
+          <div className="event-form-grid"><Field label="Лимит участников" type="number" min="1" error={errors.maxParticipants} value={form.maxParticipants} onChange={(e) => patch({ maxParticipants: e.target.value })} /><Field label="Цвет события" type="color" value={form.color} onChange={(e) => patch({ color: e.target.value })} /></div>
 
           {serverError && <p className="danger-text">{serverError}</p>}
 

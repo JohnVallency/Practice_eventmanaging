@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from core.exceptions import ResourceNotFound
+from core.exceptions import ResourceNotFound, ValidationError
 from models import Event
 from schemas import EventCreate, EventUpdate
 
@@ -43,8 +43,18 @@ class EventService:
         """
         event = Event(
             name=data.name,
+            description=data.description,
             start_date=data.start_date,
             end_date=data.end_date,
+            timezone=data.timezone,
+            venue_name=data.venue_name,
+            venue_address=data.venue_address,
+            venue_room=data.venue_room,
+            online_url=str(data.online_url) if data.online_url else None,
+            organizer_name=data.organizer_name,
+            organizer_contact=data.organizer_contact,
+            max_participants=data.max_participants,
+            color=data.color,
             status=data.status,
             total_budget=data.total_budget,
         )
@@ -128,6 +138,12 @@ class EventService:
         """
         event = await EventService.get_or_404(session, event_id)
         payload: dict[str, Any] = data.model_dump(exclude_unset=True)
+        next_start = payload.get("start_date", event.start_date)
+        next_end = payload.get("end_date", event.end_date)
+        if next_end <= next_start:
+            raise ValidationError("Дата окончания должна быть позже даты начала")
+        if "online_url" in payload and payload["online_url"] is not None:
+            payload["online_url"] = str(payload["online_url"])
         for field, value in payload.items():
             setattr(event, field, value)
         await session.flush()

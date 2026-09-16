@@ -251,6 +251,13 @@ class TestCalculateForwardPass:
         with pytest.raises(CyclicDependencyError):
             calculate_forward_pass([a, b], deps)
 
+    def test_generator_inputs_are_supported(self) -> None:
+        """Алгоритм не должен ломаться при передаче генераторов."""
+        tasks, deps = _chain([2, 3, 4])
+        result = calculate_forward_pass((task for task in tasks), (dep for dep in deps))
+
+        assert result[tasks[-1].id]["earliest_finish"] == 9
+
 
 class TestCalculateBackwardPass:
     """Обратный проход CPM: поздние старты и финишы каждой задачи.
@@ -400,6 +407,23 @@ class TestCalculateFloats:
     def test_empty_tasks_returns_empty_dict(self) -> None:
         """Пустой набор задач даёт пустой словарь результата."""
         assert calculate_floats([], [], {}, {}) == {}
+
+    @pytest.mark.parametrize(
+        ("dependency_type", "lag", "expected"),
+        [("FS", 2, 0), ("SS", 1, 0), ("FF", 2, 0), ("SF", 2, 0)],
+    )
+    def test_free_float_respects_dependency_type_and_lag(
+        self, dependency_type: str, lag: int, expected: int
+    ) -> None:
+        """Свободный резерв измеряет задержку до фактического ограничения связи."""
+        a, b = _task(5), _task(3)
+        deps = [_dep(a, b, dependency_type, lag)]
+        forward = calculate_forward_pass([a, b], deps)
+        backward = calculate_backward_pass([a, b], deps, forward[b.id]["earliest_finish"])
+
+        result = calculate_floats([a, b], deps, forward, backward)
+
+        assert result[a.id]["free_float"] == expected
 
 
 class TestIdentifyCriticalPath:

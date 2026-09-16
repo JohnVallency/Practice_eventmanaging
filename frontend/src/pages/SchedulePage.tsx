@@ -96,7 +96,13 @@ export default function SchedulePage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">План проекта</h2>
+        <div>
+          <div className="eyebrow">CPM / критический путь</div>
+          <h2 className="page__title">План проекта</h2>
+          <p className="muted">
+            Ранние и поздние сроки, резервы и цепочка задач, определяющая длительность события.
+          </p>
+        </div>
         <div className="toolbar">
           <Button variant="primary" onClick={() => void calculate()} disabled={calculating}>
             {calculating ? (
@@ -146,7 +152,7 @@ export default function SchedulePage() {
 
       {schedule !== null && (
         <>
-          <p className="muted" style={{ fontSize: 18 }}>
+          <p className="muted" style={{ fontSize: 17 }}>
             Горизонт проекта: <strong>{schedule.project_duration}</strong> дн.
           </p>
 

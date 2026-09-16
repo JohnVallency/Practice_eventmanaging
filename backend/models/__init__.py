@@ -11,6 +11,8 @@ from models.expense import Expense
 from models.notification import Notification
 from models.resource import Resource
 from models.task import Task
+from models.task_comment import TaskComment
+from models.task_history import TaskHistory
 from models.task_dependency import TaskDependency
 from models.venue import Venue
 
@@ -27,6 +29,8 @@ __all__ = [
     "ResourceType",
     "Task",
     "TaskDependency",
+    "TaskComment",
+    "TaskHistory",
     "uuid_pk",
     "Venue",
 ]

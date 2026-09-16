@@ -132,7 +132,13 @@ export default function MapPage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">Карта площадок</h2>
+        <div>
+          <div className="eyebrow">География события</div>
+          <h2 className="page__title">Карта площадок</h2>
+          <p className="muted">
+            Точки площадок и центр масс — опорная география для логистики и поиска места.
+          </p>
+        </div>
         <button type="button" className="btn--primary" onClick={() => setModalOpen(true)}>
           Добавить площадку
         </button>
@@ -171,6 +177,19 @@ export default function MapPage() {
       )}
 
       {!loading && error === null && venues.length > 0 && (
+        <>
+        <div className="venue-map" role="img" aria-label="Схематичная карта площадок">
+          {center !== null && <span className="venue-map__center" style={{ left: "50%", top: "50%" }} title="Центр площадок" />}
+          {venues.map((venue) => {
+            const latitudeValues = venues.map((item) => item.latitude);
+            const longitudeValues = venues.map((item) => item.longitude);
+            const latRange = Math.max(...latitudeValues) - Math.min(...latitudeValues) || 1;
+            const lonRange = Math.max(...longitudeValues) - Math.min(...longitudeValues) || 1;
+            const mapUrl = `https://www.openstreetmap.org/?mlat=${venue.latitude}&mlon=${venue.longitude}#map=16/${venue.latitude}/${venue.longitude}`;
+            return <a className="venue-map__point" key={venue.id} href={mapUrl} target="_blank" rel="noreferrer" style={{ left: `${10 + ((venue.longitude - Math.min(...longitudeValues)) / lonRange) * 80}%`, top: `${90 - ((venue.latitude - Math.min(...latitudeValues)) / latRange) * 80}%` }} title={venue.name}>{venue.name.slice(0, 1)}</a>;
+          })}
+          <div className="venue-map__caption">Схема площадок · откройте точку в OpenStreetMap</div>
+        </div>
         <div className="grid-cards">
           {center !== null && (
             <div className="card">
@@ -190,6 +209,7 @@ export default function MapPage() {
             </div>
           ))}
         </div>
+        </>
       )}
 
       <Modal

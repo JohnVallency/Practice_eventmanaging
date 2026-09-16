@@ -199,19 +199,21 @@ def calculate_forward_pass(
 
         Связь SS с лагом 1: если ES(A) = 0, то ES(B) = 0 + 1 = 1.
     """
+    task_list = list(tasks)
+    dependency_list = list(dependencies)
     # Топологический порядок (при цикле здесь вылетит CyclicDependencyError).
-    order = topological_sort_kahn(tasks, dependencies)
+    order = topological_sort_kahn(task_list, dependency_list)
     if not order:
         return {}
 
     durations: dict[uuid.UUID, int] = {
-        task.id: int(task.duration_days) for task in tasks
+        task.id: int(task.duration_days) for task in task_list
     }
 
     # Ограничения по последователям: successor_id -> [(pred_id, тип, лаг)].
     constraints: dict[uuid.UUID, list[tuple[uuid.UUID, str, int]]] = {}
     seen_pairs: set[tuple[uuid.UUID, uuid.UUID]] = set()
-    for dep in dependencies:
+    for dep in dependency_list:
         pair = (dep.predecessor_id, dep.successor_id)
         if pair in seen_pairs:
             # Повторяющаяся пара — игнорируем (учитываем первое вхождение).
@@ -290,10 +292,11 @@ def calculate_backward_pass(
 
             LF(C) = 9, LS(C) = 5;  LF(B) = 5, LS(B) = 2;  LF(A) = 2, LS(A) = 0
     """
-    if not tasks:
+    task_list = list(tasks)
+    dependency_list = list(dependencies)
+    if not task_list:
         return {}
 
-    task_list = list(tasks)
     durations: dict[uuid.UUID, int] = {
         task.id: int(task.duration_days) for task in task_list
     }
@@ -301,7 +304,7 @@ def calculate_backward_pass(
     # Последователи каждой задачи: pred_id -> [(succ_id, тип, лаг)].
     successors: dict[uuid.UUID, list[tuple[uuid.UUID, str, int]]] = {}
     seen_pairs: set[tuple[uuid.UUID, uuid.UUID]] = set()
-    for dep in dependencies:
+    for dep in dependency_list:
         pair = (dep.predecessor_id, dep.successor_id)
         if pair in seen_pairs:
             continue
@@ -316,7 +319,7 @@ def calculate_backward_pass(
 
     # Обход в обратном топологическом порядке: последователи задачи
     # гарантированно уже обработаны.
-    order = topological_sort_kahn(task_list, dependencies)
+    order = topological_sort_kahn(task_list, dependency_list)
     latest: dict[uuid.UUID, dict[str, int]] = {}
     ls_values: dict[uuid.UUID, int] = {}
     lf_values: dict[uuid.UUID, int] = {}
@@ -357,11 +360,14 @@ def calculate_floats(
     Формулы::
 
         total_float = LS - ES
-        free_float  = min(ES последователей) - EF  (у задач без
-                      последователей free_float = 0)
+        free_float рассчитывается по фактическому ограничению каждой связи:
 
-    ВАЖНО: ``lag`` во free_float не учитывается — упрощение принято в ТЗ;
-    значения точны при lag = 0.
+            FS: ES_succ - (EF_pred + lag)
+            SS: ES_succ - (ES_pred + lag)
+            FF: EF_succ - (EF_pred + lag)
+            SF: EF_succ - (ES_pred + lag)
+
+        Для задачи без последователей ``free_float = 0``.
 
     Args:
         tasks: объекты с атрибутом ``id: uuid.UUID``.
@@ -374,18 +380,23 @@ def calculate_floats(
         dict: {task_id: {"total_float": int, "free_float": int}}.
         Пустой tasks -> {}.
     """
-    task_ids = [task.id for task in tasks]
+    task_list = list(tasks)
+    dependency_list = list(dependencies)
+    task_ids = [task.id for task in task_list]
     if not task_ids:
         return {}
 
-    successors: dict[uuid.UUID, list[uuid.UUID]] = {}
+    task_by_id = {task.id: task for task in task_list}
+    successors: dict[uuid.UUID, list[tuple[uuid.UUID, str, int]]] = {}
     seen_pairs: set[tuple[uuid.UUID, uuid.UUID]] = set()
-    for dep in dependencies:
+    for dep in dependency_list:
         pair = (dep.predecessor_id, dep.successor_id)
         if pair in seen_pairs:
             continue
         seen_pairs.add(pair)
-        successors.setdefault(dep.predecessor_id, []).append(dep.successor_id)
+        successors.setdefault(dep.predecessor_id, []).append(
+            (dep.successor_id, _dependency_type_value(dep.dependency_type), int(dep.lag_days))
+        )
 
     floats: dict[uuid.UUID, dict[str, int]] = {}
     for tid in task_ids:
@@ -393,9 +404,22 @@ def calculate_floats(
         ef = forward[tid]["earliest_finish"]
         ls = backward[tid]["latest_start"]
         total = ls - es
-        succ_ids = successors.get(tid)
-        if succ_ids:
-            free = min(forward[s]["earliest_start"] for s in succ_ids) - ef
+        succ_deps = successors.get(tid)
+        if succ_deps:
+            candidates: list[int] = []
+            for successor_id, dep_type, lag in succ_deps:
+                successor = task_by_id[successor_id]
+                successor_es = forward[successor_id]["earliest_start"]
+                successor_ef = forward[successor_id]["earliest_finish"]
+                if dep_type == "FS":
+                    candidates.append(successor_es - (ef + lag))
+                elif dep_type == "SS":
+                    candidates.append(successor_es - (es + lag))
+                elif dep_type == "FF":
+                    candidates.append(successor_ef - (ef + lag))
+                else:
+                    candidates.append(successor_ef - (es + lag))
+            free = min(candidates)
         else:
             free = 0
         floats[tid] = {"total_float": total, "free_float": free}

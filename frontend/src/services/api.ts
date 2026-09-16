@@ -33,6 +33,10 @@ import type {
   TaskDependency,
   TaskDependencyCreate,
   TaskUpdate,
+  TaskStatus,
+  TaskPriority,
+  TaskComment,
+  TaskHistory,
   Venue,
   VenueCreate,
 } from "../types";
@@ -116,10 +120,28 @@ export interface PaginationParams {
   limit?: number;
 }
 
+export interface TaskListParams extends PaginationParams {
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  assignee?: string;
+}
+
 /** Фильтры списка назначений GET /assignments. */
 export interface AssignmentListParams extends PaginationParams {
   task_id?: string;
   resource_id?: string;
+}
+
+async function listAllPages<T>(request: (params: PaginationParams) => Promise<T[]>): Promise<T[]> {
+  const result: T[] = [];
+  let skip = 0;
+  const limit = 100;
+  while (true) {
+    const page = await request({ skip, limit });
+    result.push(...page);
+    if (page.length < limit) return result;
+    skip += limit;
+  }
 }
 
 /** GET /health — живёт в корне сервера, вне префикса /api. */
@@ -138,6 +160,9 @@ export const api = {
     /** GET /events?skip&limit */
     list(params?: PaginationParams): Promise<Event[]> {
       return unwrap(client.get<Event[]>("/events", { params }));
+    },
+    listAll(): Promise<Event[]> {
+      return listAllPages((params) => this.list(params));
     },
     /** GET /events/{event_id} */
     get(eventId: string): Promise<Event> {
@@ -159,10 +184,13 @@ export const api = {
 
   tasks: {
     /** GET /tasks?event_id&skip&limit (фильтр по событию — query-параметр). */
-    list(eventId: string, params?: PaginationParams): Promise<Task[]> {
+    list(eventId: string, params?: TaskListParams): Promise<Task[]> {
       return unwrap(
         client.get<Task[]>("/tasks", { params: { event_id: eventId, ...params } }),
       );
+    },
+    listAll(eventId: string): Promise<Task[]> {
+      return listAllPages((params) => this.list(eventId, params));
     },
     /** GET /tasks/{task_id} */
     get(taskId: string): Promise<Task> {
@@ -179,6 +207,15 @@ export const api = {
     /** DELETE /tasks/{task_id} -> 204 */
     async delete(taskId: string): Promise<void> {
       await client.delete(`/tasks/${taskId}`);
+    },
+    comments(taskId: string): Promise<TaskComment[]> {
+      return unwrap(client.get<TaskComment[]>(`/tasks/${taskId}/comments`));
+    },
+    addComment(taskId: string, body: string, author = "Анна"): Promise<TaskComment> {
+      return unwrap(client.post<TaskComment>(`/tasks/${taskId}/comments`, { body, author }));
+    },
+    history(taskId: string): Promise<TaskHistory[]> {
+      return unwrap(client.get<TaskHistory[]>(`/tasks/${taskId}/history`));
     },
   },
 
@@ -236,6 +273,9 @@ export const api = {
     /** GET /assignments?task_id&resource_id&skip&limit. */
     list(params?: AssignmentListParams): Promise<Assignment[]> {
       return unwrap(client.get<Assignment[]>("/assignments", { params }));
+    },
+    listAll(params?: Omit<AssignmentListParams, "skip" | "limit">): Promise<Assignment[]> {
+      return listAllPages((page) => this.list({ ...params, ...page }));
     },
     /** GET /assignments/{assignment_id} */
     get(assignmentId: string): Promise<Assignment> {

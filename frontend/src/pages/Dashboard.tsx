@@ -27,7 +27,7 @@ export function Dashboard() {
       setLoading(true);
       
       // Загружаем события
-      const eventsData = await api.events.list();
+      const eventsData = await api.events.listAll();
       setEvents(eventsData);
       
       // Считаем статистику
@@ -36,7 +36,7 @@ export function Dashboard() {
       // Загружаем задачи всех событий
       let allTasks: any[] = [];
       for (const event of eventsData) {
-        const tasks = await api.tasks.list(event.id);
+        const tasks = await api.tasks.listAll(event.id);
         allTasks = allTasks.concat(tasks);
       }
       const criticalCount = allTasks.filter(t => t.is_critical === true).length;
@@ -73,7 +73,13 @@ export function Dashboard() {
     return (
       <div className="page">
         <div className="page__header">
-          <h1 className="page__title">Обзор проектов</h1>
+          <div>
+            <div className="eyebrow">Studio / overview</div>
+            <h1 className="page__title">Обзор проектов</h1>
+            <p className="muted">
+              Сводка по событиям, задачам и критическим точкам портфеля.
+            </p>
+          </div>
         </div>
         <div className="dashboard__stats">
           {[1, 2, 3, 4].map(i => (
@@ -87,7 +93,11 @@ export function Dashboard() {
   return (
     <div className="page">
       <div className="page__header">
-        <h1 className="page__title">Обзор проектов</h1>
+        <div>
+          <div className="eyebrow">Studio / overview</div>
+          <h1 className="page__title">Обзор проектов</h1>
+          <p className="muted">Сводка по событиям, задачам и критическим точкам портфеля.</p>
+        </div>
       </div>
 
       {/* Статистика */}
@@ -113,7 +123,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Quick Actions */}
+      {/* Быстрые действия */}
       <div className="dashboard__section">
         <div className="quick-actions">
           <Link to="/events/new">
@@ -146,7 +156,7 @@ export function Dashboard() {
                     <span className="muted">
                       {formatDate(event.start_date)} — {formatDate(event.end_date)}
                     </span>
-                    <span className={`badge badge--${event.status === 'active' ? 'success' : 'muted'}`}>
+                    <span className={`badge badge--${event.status === 'active' ? 'ok' : 'muted'}`}>
                       {statusLabels[event.status] || event.status}
                     </span>
                   </div>

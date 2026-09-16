@@ -2,8 +2,9 @@
  * Страница карточки события /events/:id — поля, смена статуса, статистика.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { FiCalendar, FiMapPin, FiMonitor, FiUser } from "react-icons/fi";
 
 import { Badge, EmptyState, Modal, Skeleton, useToast } from "../components/ui";
 import { api, ApiError } from "../services/api";
@@ -42,6 +43,11 @@ function formatDate(value: string): string {
   const num = Date.parse(value);
   if (Number.isNaN(num)) return value.slice(0, 10);
   return new Date(num).toLocaleDateString("ru-RU");
+}
+
+function formatDateTime(value: string, timezone: string): string {
+  const date = new Date(value);
+  return `${date.toLocaleDateString("ru-RU")} · ${date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })} (${timezone})`;
 }
 
 interface Stats {
@@ -204,16 +210,26 @@ export default function EventDetailPage() {
 
   return (
     <section className="page">
-      <div className="page__header">
-        <h2 className="page__title">Событие</h2>
+
+      <div className="event-detail-hero" style={{ "--event-accent": event.color } as CSSProperties}>
+      <div className="event-detail-hero__main">
+        <div className="eyebrow">Event workspace</div>
+        <h1>{event.name}</h1>
+        <p>{event.description || "Добавьте описание, чтобы команда видела контекст и цель события."}</p>
+      </div>
+      <div className="event-detail-meta">
+        <div><FiCalendar /><div><span>Период</span><strong>{formatDateTime(event.start_date, event.timezone)} — {formatDateTime(event.end_date, event.timezone)}</strong></div></div>
+        <div><FiMapPin /><div><span>Площадка</span><strong>{event.venue_name || "Площадка не указана"}{event.venue_room ? ` · ${event.venue_room}` : ""}</strong>{event.venue_address && <span>{event.venue_address}</span>}</div></div>
+        {event.online_url && <div><FiMonitor /><div><span>Онлайн</span><strong><a href={event.online_url} target="_blank" rel="noreferrer">Открыть подключение</a></strong></div></div>}
+        {event.organizer_name && <div><FiUser /><div><span>Ответственный</span><strong>{event.organizer_name}</strong>{event.organizer_contact && <span>{event.organizer_contact}</span>}</div></div>}
+      </div>
       </div>
 
-      <div className="hint-panel">
+      <div className="hint-panel" style={{ marginTop: 16 }}>
         <p>
-          Событие — контейнер проекта. Внутри вы заводите задачи, связываете их зависимостями,
-          назначаете ресурсы и ведёте бюджет. Статус — просто метка для вас: Черновик → В работе →
-          Завершён → Архив, на расчёты не влияет. Поля «Раннее/Позднее начало» на странице «План»
-          появятся после расчёта.
+          <strong>Событие</strong> — контейнер проекта: внутри задачи, зависимости, ресурсы и
+          бюджет. Статус — метка для команды (Черновик → В работе → Завершён → Архив) и на расчёты
+          не влияет. Поля «Раннее/Позднее начало» появятся на странице «План» после расчёта.
         </p>
       </div>
 
@@ -228,11 +244,11 @@ export default function EventDetailPage() {
           </div>
           <div>
             <dt>Начало</dt>
-            <dd>{formatDate(event.start_date)}</dd>
+            <dd>{formatDateTime(event.start_date, event.timezone)}</dd>
           </div>
           <div>
             <dt>Окончание</dt>
-            <dd>{formatDate(event.end_date)}</dd>
+            <dd>{formatDateTime(event.end_date, event.timezone)}</dd>
           </div>
           <div>
             <dt>Общий бюджет</dt>
@@ -242,6 +258,7 @@ export default function EventDetailPage() {
             <dt>Создано</dt>
             <dd>{formatDate(event.created_at)}</dd>
           </div>
+          <div><dt>Участники</dt><dd>{event.max_participants ? `до ${event.max_participants}` : "без лимита"}</dd></div>
         </dl>
 
         <div className="field">
@@ -282,27 +299,24 @@ export default function EventDetailPage() {
 
       <div className="grid-cards">
         <div className="card">
-          <strong>Задачи</strong>
-          <div className="page__title">
+          <div className="stat-card__label">Задачи события</div>
+          <div className="stat-card__value">
             {stats.taskCount === null ? "—" : String(stats.taskCount)}
           </div>
         </div>
         <div className="card">
-          <strong>Остаток бюджета</strong>
-          <div className={overBudget ? "danger-text" : undefined}>
-            {remaining === null
-              ? "—"
-              : `${formatMoney(summary?.remaining_budget ?? "0")}`}
+          <div className="stat-card__label">Остаток бюджета</div>
+          <div className={`stat-card__value${overBudget ? " stat-card__value--critical" : ""}`}>
+            {remaining === null ? "—" : formatMoney(summary?.remaining_budget ?? "0")}
           </div>
           {summary !== null && summary.total_budget !== null && (
             <div className="progress">
               <div
                 className={overBudget ? "progress__fill progress__fill--over" : "progress__fill"}
-                style={{
-                  width: `${Math.min(
-                    100,
-                    (Number(summary.total_expenses) / Number(summary.total_budget)) * 100,
-                  )}%`,
+                  style={{
+                  width: Number(summary.total_budget) > 0
+                    ? `${Math.min(100, (Number(summary.total_expenses) / Number(summary.total_budget)) * 100)}%`
+                    : "0%",
                 }}
               />
             </div>

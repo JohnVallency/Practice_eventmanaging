@@ -155,7 +155,13 @@ export default function FinancesPage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">Финансы</h2>
+        <div>
+          <div className="eyebrow">Бюджет и расходы</div>
+          <h2 className="page__title">Финансы</h2>
+          <p className="muted">
+            Остаток = бюджет − расходы. Процент расходов и превышение видны сразу.
+          </p>
+        </div>
         <button
           type="button"
           className="btn--primary"
@@ -192,16 +198,16 @@ export default function FinancesPage() {
             {hasBudget ? (
               <>
                 <div className="grid-cards">
-                  <div>
-                    <div className="muted">Бюджет</div>
+                  <div className="finance-figure">
+                    <div className="stat-card__label">Бюджет</div>
                     <strong>{formatMoney(summary.total_budget ?? "0")}</strong>
                   </div>
-                  <div>
-                    <div className="muted">Израсходовано</div>
+                  <div className="finance-figure">
+                    <div className="stat-card__label">Израсходовано</div>
                     <strong>{formatMoney(summary.total_expenses)}</strong>
                   </div>
-                  <div>
-                    <div className="muted">Остаток</div>
+                  <div className="finance-figure">
+                    <div className="stat-card__label">Остаток</div>
                     <strong className={overBudget ? "danger-text" : undefined}>
                       {summary.remaining_budget === null
                         ? "—"

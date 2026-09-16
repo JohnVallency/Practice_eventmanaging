@@ -53,7 +53,7 @@ export default function ResourceSchedulePage() {
     setCalculating(true);
     setLoadError(null);
     try {
-      const tasks = await api.tasks.list(id);
+      const tasks = await api.tasks.listAll(id);
       const scheduleData = await api.resourcesSchedule.calculate(id);
       const utilizationData = await api.resourcesSchedule.utilization(id);
       setTaskNames(Object.fromEntries(tasks.map((task) => [task.id, task.name] as const)));
@@ -78,7 +78,13 @@ export default function ResourceSchedulePage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">План с ресурсами</h2>
+        <div>
+          <div className="eyebrow">RCPSP / сглаживание ресурсов</div>
+          <h2 className="page__title">План с ресурсами</h2>
+          <p className="muted">
+            Расписание, пересобранное под доступность людей, техники и площадок по дням.
+          </p>
+        </div>
         <div className="toolbar">
           <Button variant="primary" onClick={() => void calculate()} disabled={calculating}>
             {calculating ? (
@@ -132,7 +138,7 @@ export default function ResourceSchedulePage() {
 
       {schedule !== null && taskIds.length > 0 && (
         <>
-          <p className="muted" style={{ fontSize: 18 }}>
+          <p className="muted" style={{ fontSize: 17 }}>
             Ресурсный горизонт: <strong>{schedule.resource_project_duration}</strong> дн.
           </p>
 
@@ -218,8 +224,8 @@ export default function ResourceSchedulePage() {
                               height: 64,
                               display: "flex",
                               alignItems: "flex-end",
-                              background: "#F3F4F6",
-                              borderRadius: 4,
+                              background: "#f1eadd",
+                              borderRadius: 3,
                             }}
                           >
                             <div
@@ -227,8 +233,8 @@ export default function ResourceSchedulePage() {
                               style={{
                                 width: "100%",
                                 height: `${Math.min(percent, 100)}%`,
-                                background: over ? "#DC2626" : "#111827",
-                                borderRadius: 4,
+                                background: over ? "#a32817" : "#17140f",
+                                borderRadius: 3,
                                 transition: "width 300ms",
                               }}
                             />

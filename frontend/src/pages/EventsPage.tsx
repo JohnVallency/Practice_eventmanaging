@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { Badge, EmptyState, Skeleton, useToast } from "../components/ui";
+import { Badge, Button, EmptyState, Skeleton, useToast } from "../components/ui";
 import { api } from "../services/api";
 import { describeError } from "../services/errors";
 import { useEventStore } from "../store/eventStore";
@@ -39,6 +39,10 @@ function formatDate(value: string): string {
   const num = Date.parse(value);
   if (Number.isNaN(num)) return value.slice(0, 10);
   return new Date(num).toLocaleDateString("ru-RU");
+}
+
+function formatTime(value: string): string {
+  return new Date(value).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
 
 export default function EventsPage() {
@@ -99,7 +103,7 @@ export default function EventsPage() {
       if (requestedIds.current.has(item.id)) continue;
       requestedIds.current.add(item.id);
       void api.tasks
-        .list(item.id)
+        .listAll(item.id)
         .then((tasks) => {
           if (countsCancelled.current) return;
           setTaskCounts((prev) => ({ ...prev, [item.id]: tasks.length }));
@@ -124,11 +128,9 @@ export default function EventsPage() {
 
   return (
     <section className="page">
-      <div className="page__header">
-        <h2 className="page__title">События</h2>
-        <button type="button" className="btn--primary" onClick={() => navigate("/events/new")}>
-          Создать событие
-        </button>
+      <div className="page__header events-page-header">
+        <div><div className="eyebrow">Workspace / events</div><h2 className="page__title">События</h2><p className="events-page-header__sub">Проекты, расписание и площадки в одном рабочем пространстве.</p></div>
+        <Button variant="primary" onClick={() => navigate("/events/new")}>Создать событие</Button>
       </div>
 
       {loading && (
@@ -162,21 +164,18 @@ export default function EventsPage() {
               <button
                 type="button"
                 key={event.id}
-                className="card"
+                className="event-tile"
                 onClick={() => openEvent(event)}
               >
-                <div>
-                  <strong>{event.name}</strong>{" "}
+                <div className="event-tile__accent" style={{ background: event.color }} />
+                <div className="event-tile__top">
+                  <span className="event-tile__label">Event workspace</span>
                   <Badge tone={STATUS_TONES[event.status]}>{STATUS_LABELS[event.status]}</Badge>
                 </div>
-                <div className="muted">
-                  {formatDate(event.start_date)} — {formatDate(event.end_date)}
-                </div>
-                <div>Бюджет: {formatMoney(event.total_budget)}</div>
-                {taskCounts[event.id] !== undefined && (
-                  <div className="muted">Задач: {taskCounts[event.id]}</div>
-                )}
-                <div className="muted">Создано: {formatDate(event.created_at)}</div>
+                <strong className="event-tile__title">{event.name}</strong>
+                <div className="event-tile__schedule"><span>{formatDate(event.start_date)}</span><b>{formatTime(event.start_date)}</b><i>→</i><span>{formatDate(event.end_date)}</span><b>{formatTime(event.end_date)}</b></div>
+                <div className="event-tile__venue"><span>{event.venue_name || "Площадка не указана"}</span>{event.venue_room && <small>{event.venue_room}</small>}</div>
+                <div className="event-tile__footer"><span>{taskCounts[event.id] !== undefined ? `${taskCounts[event.id]} задач` : "Задачи загружаются"}</span><span>{formatMoney(event.total_budget)}</span></div>
               </button>
             ))}
           </div>

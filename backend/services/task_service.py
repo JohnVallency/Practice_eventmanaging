@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from core.exceptions import ConflictError, ResourceNotFound, ValidationError
-from models import Event, Task, TaskDependency
+from models import Event, Task, TaskComment, TaskDependency, TaskHistory
 from schemas import TaskCreate, TaskDependencyCreate, TaskUpdate
 
 # Жёсткий верхний предел страницы списка.
@@ -47,10 +47,23 @@ class TaskService:
         event = await session.get(Event, data.event_id)
         if event is None:
             raise ResourceNotFound("Событие не найдено")
+        if data.parent_id is not None:
+            parent = await session.get(Task, data.parent_id)
+            if parent is None or parent.event_id != data.event_id:
+                raise ValidationError("Родительская задача должна принадлежать этому событию")
         task = Task(
             event_id=data.event_id,
             name=data.name,
+            description=data.description,
             duration_days=data.duration_days,
+            archived=data.archived,
+            status=data.status,
+            priority=data.priority,
+            due_date=data.due_date,
+            assignee=data.assignee,
+            category=data.category,
+            parent_id=data.parent_id,
+            tags=data.tags,
         )
         session.add(task)
         await session.flush()
@@ -95,6 +108,9 @@ class TaskService:
         event_id: uuid.UUID | None = None,
         skip: int = 0,
         limit: int = DEFAULT_LIMIT,
+        status: str | None = None,
+        priority: str | None = None,
+        assignee: str | None = None,
     ) -> Sequence[Task]:
         """Получить список задач с опциональным фильтром по событию.
 
@@ -113,6 +129,12 @@ class TaskService:
         stmt = select(Task).order_by(Task.created_at)
         if event_id is not None:
             stmt = stmt.where(Task.event_id == event_id)
+        if status is not None:
+            stmt = stmt.where(Task.status == status)
+        if priority is not None:
+            stmt = stmt.where(Task.priority == priority)
+        if assignee is not None:
+            stmt = stmt.where(Task.assignee == assignee)
         result = await session.execute(stmt.offset(skip).limit(safe_limit))
         return result.scalars().all()
 
@@ -136,10 +158,38 @@ class TaskService:
         task = await TaskService.get_or_404(session, task_id)
         payload: dict[str, Any] = data.model_dump(exclude_unset=True)
         for field, value in payload.items():
+            if field == "parent_id" and value is not None:
+                parent = await session.get(Task, value)
+                if parent is None or parent.event_id != task.event_id or parent.id == task.id:
+                    raise ValidationError("Родительская задача должна принадлежать этому событию")
+            old_value = getattr(task, field)
             setattr(task, field, value)
+            if old_value != value:
+                session.add(TaskHistory(task_id=task.id, action=field, from_value=str(old_value) if old_value is not None else None, to_value=str(value) if value is not None else None))
         await session.flush()
         await session.refresh(task)
         return task
+
+    @staticmethod
+    async def comments(session: AsyncSession, task_id: uuid.UUID) -> Sequence[TaskComment]:
+        await TaskService.get_or_404(session, task_id)
+        result = await session.execute(select(TaskComment).where(TaskComment.task_id == task_id).order_by(TaskComment.created_at.desc()))
+        return result.scalars().all()
+
+    @staticmethod
+    async def add_comment(session: AsyncSession, task_id: uuid.UUID, body: str, author: str) -> TaskComment:
+        await TaskService.get_or_404(session, task_id)
+        comment = TaskComment(task_id=task_id, body=body, author=author)
+        session.add(comment)
+        await session.flush()
+        await session.refresh(comment)
+        return comment
+
+    @staticmethod
+    async def history(session: AsyncSession, task_id: uuid.UUID) -> Sequence[TaskHistory]:
+        await TaskService.get_or_404(session, task_id)
+        result = await session.execute(select(TaskHistory).where(TaskHistory.task_id == task_id).order_by(TaskHistory.created_at.desc()))
+        return result.scalars().all()
 
     @staticmethod
     async def delete(session: AsyncSession, task_id: uuid.UUID) -> None:
@@ -213,6 +263,8 @@ class TaskService:
         predecessor = await TaskService.get(session, data.predecessor_id)
         if predecessor is None:
             raise ResourceNotFound("Задача-предшественник не найдена")
+        if predecessor.event_id != task.event_id:
+            raise ValidationError("Связь должна соединять задачи одного события")
         dependency = TaskDependency(
             predecessor_id=data.predecessor_id,
             successor_id=task_id,

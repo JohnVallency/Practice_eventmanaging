@@ -30,10 +30,10 @@ const RESOURCE_TYPES: readonly ResourceType[] = ["human", "equipment", "venue"];
 
 const SELECT_STYLE = {
   width: "100%",
-  padding: "8px 10px",
-  borderRadius: 8,
-  border: "1px solid #E7E5E0",
-  background: "#FFFFFF",
+  padding: "9px 12px",
+  borderRadius: 5,
+  border: "1px solid #dcd2bf",
+  background: "#fffdf8",
   font: "inherit",
   color: "inherit",
 } as const;
@@ -109,8 +109,8 @@ export default function ResourcesPage() {
     try {
       const [resourcesData, tasksData, assignmentsData] = await Promise.all([
         api.resources.list(id),
-        api.tasks.list(id),
-        api.assignments.list({}),
+        api.tasks.listAll(id),
+        api.assignments.listAll(),
       ]);
       const eventIdSet = new Set(tasksData.map((task) => task.event_id));
       setResources(resourcesData);
@@ -303,7 +303,13 @@ export default function ResourcesPage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">Ресурсы</h2>
+        <div>
+          <div className="eyebrow">Команда и оборудование</div>
+          <h2 className="page__title">Ресурсы</h2>
+          <p className="muted">
+            Доступность в день и стоимость: из этих данных складывается ресурсный план и бюджет.
+          </p>
+        </div>
         <div className="toolbar">
           <Button variant="primary" onClick={() => setCreateOpen(true)}>
             Добавить ресурс
@@ -387,7 +393,7 @@ export default function ResourcesPage() {
                   </Button>
                 </div>
                 {resourceAssignments.length > 0 && (
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>
                     {resourceAssignments.map((assignment) => (
                       <li key={assignment.id}>
                         {taskNameById.get(assignment.task_id) ?? assignment.task_id}{" "}
@@ -544,8 +550,8 @@ export default function ResourcesPage() {
                 style={{
                   display: "grid",
                   gap: 12,
-                  borderTop: "1px solid #E7E5E0",
-                  paddingTop: 12,
+                  borderTop: "1px solid #e8e0d1",
+                  paddingTop: 14,
                 }}
               >
                 <strong>Добавить назначение</strong>

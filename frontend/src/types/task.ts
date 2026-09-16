@@ -8,13 +8,34 @@ export interface TaskCreate {
   event_id: string;
   name: string;
   duration_days: number;
+  description?: string;
+  archived?: boolean;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  due_date?: string | null;
+  assignee?: string | null;
+  category?: string | null;
+  parent_id?: string | null;
+  tags?: string[];
 }
 
 /** Схема частичного обновления задачи (TaskUpdate). */
 export interface TaskUpdate {
   name?: string;
   duration_days?: number;
+  description?: string;
+  archived?: boolean;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  due_date?: string | null;
+  assignee?: string | null;
+  category?: string | null;
+  parent_id?: string | null;
+  tags?: string[];
 }
+
+export type TaskStatus = "todo" | "in_progress" | "done" | "cancelled";
+export type TaskPriority = "high" | "medium" | "low";
 
 /** Ответ с данными задачи (TaskResponse). Полей status/description в схеме нет. */
 export interface Task {
@@ -22,6 +43,15 @@ export interface Task {
   event_id: string;
   name: string;
   duration_days: number;
+  description: string;
+  archived: boolean;
+  status: TaskStatus;
+  priority: TaskPriority;
+  due_date: string | null;
+  assignee: string | null;
+  category: string | null;
+  parent_id: string | null;
+  tags: string[];
   earliest_start: number | null;
   earliest_finish: number | null;
   latest_start: number | null;
@@ -33,6 +63,9 @@ export interface Task {
   is_critical: boolean;
   created_at: string;
 }
+
+export interface TaskComment { id: string; task_id: string; body: string; author: string; created_at: string; }
+export interface TaskHistory { id: string; task_id: string; action: string; from_value: string | null; to_value: string | null; author: string; created_at: string; }
 
 /** Тип связи задач — models/enums.py DependencyType. */
 export type DependencyType = "FS" | "SS" | "FF" | "SF";

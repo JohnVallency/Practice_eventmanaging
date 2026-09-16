@@ -55,7 +55,10 @@ export default function NotificationsPage() {
     return (
       <section className="page">
         <div className="page__header">
-          <h2 className="page__title">Уведомления</h2>
+          <div>
+            <div className="eyebrow">Контроль сроков</div>
+            <h2 className="page__title">Уведомления</h2>
+          </div>
         </div>
         <div className="card">
           <Skeleton w="30%" h={18} />
@@ -69,7 +72,13 @@ export default function NotificationsPage() {
   return (
     <section className="page">
       <div className="page__header">
-        <h2 className="page__title">Уведомления</h2>
+        <div>
+          <div className="eyebrow">Контроль сроков</div>
+          <h2 className="page__title">Уведомления</h2>
+          <p className="muted">
+            Сигналы расчётчика: задачи, вышедшие за плановый срок, и служебные сообщения события.
+          </p>
+        </div>
       </div>
 
       {error !== null && <EmptyState title="Ошибка загрузки" hint={error} />}

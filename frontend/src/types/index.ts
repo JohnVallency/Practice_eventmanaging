@@ -17,6 +17,10 @@ export type {
   TaskDependency,
   TaskDependencyCreate,
   TaskUpdate,
+  TaskStatus,
+  TaskPriority,
+  TaskComment,
+  TaskHistory,
 } from "./task";
 
 export type {

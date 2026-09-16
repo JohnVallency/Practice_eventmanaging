@@ -26,6 +26,7 @@ from services.scheduling import (
     calculate_floats,
     calculate_forward_pass,
     identify_critical_path,
+    topological_sort_kahn,
 )
 
 
@@ -109,8 +110,11 @@ class ScheduleService:
         total_floats = {
             tid: values["total_float"] for tid, values in floats.items()
         }
+        topological_order = topological_sort_kahn(tasks, dependencies)
+        task_by_id = {task.id: task for task in tasks}
+        ordered_tasks = [task_by_id[task_id] for task_id in topological_order]
         critical_path: list[uuid.UUID] = identify_critical_path(
-            tasks, total_floats
+            ordered_tasks, total_floats
         )
         critical_ids: set[uuid.UUID] = set(critical_path)
 
