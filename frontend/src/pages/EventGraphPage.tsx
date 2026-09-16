@@ -103,8 +103,17 @@ interface AxisTickData extends Record<string, unknown> {
   kind: "start" | "tick" | "event";
 }
 
-/** Узел графа: задача либо элемент оси таймлайна. */
-type GraphNode = TaskFlowNode | Node<AxisLineData, "axisLine"> | Node<AxisTickData, "axisTick">;
+interface DueLineData extends Record<string, unknown> {
+  height: number;
+  overdue: boolean;
+}
+
+/** Узел графа: задача либо элемент оси/линии дедлайна. */
+type GraphNode =
+  | TaskFlowNode
+  | Node<AxisLineData, "axisLine">
+  | Node<AxisTickData, "axisTick">
+  | Node<DueLineData, "dueLine">;
 
 /**
  * Строит узлы оси таймлайна: линию, отметки дат и маркер даты мероприятия.
@@ -121,6 +130,7 @@ function buildAxisNodes(
       type: "axisLine",
       position: { x: AXIS_X0, y: AXIS_Y },
       data: { width: Math.max(totalDays, 1) * PX_PER_DAY },
+      style: { width: Math.max(totalDays, 1) * PX_PER_DAY, height: 4, zIndex: 0 },
       draggable: false,
       selectable: false,
       connectable: false,
@@ -139,6 +149,7 @@ function buildAxisNodes(
         label: day === 0 ? `Сегодня · ${formatDateShort(tickDate)}` : formatDateShort(tickDate),
         kind: day === 0 ? "start" : "tick",
       },
+      style: { width: 2, height: 16, zIndex: 0 },
       draggable: false,
       selectable: false,
       connectable: false,
@@ -152,6 +163,7 @@ function buildAxisNodes(
       type: "axisTick",
       position: { x: AXIS_X0 + totalDays * PX_PER_DAY, y: AXIS_Y - 44 },
       data: { label: `Дата мероприятия · ${formatDateShort(eventEnd)}`, kind: "event" },
+      style: { width: 2, height: 16, zIndex: 0 },
       draggable: false,
       selectable: false,
       connectable: false,
@@ -160,6 +172,48 @@ function buildAxisNodes(
   }
 
   return axisNodes;
+}
+
+/**
+ * Строит вертикальные линии дедлайна: от оси вниз до самой нижней задачи
+ * на каждой дате с дедлайном. Просроченные дедлайны рисуются красным.
+ */
+function buildDueLines(
+  tasks: Task[],
+  timelineStart: Date,
+  timelineEnd: Date,
+  xForDate: (date: Date) => number,
+  maxNodeBottom: number,
+): GraphNode[] {
+  const byDay = new Map<number, { count: number; overdue: boolean }>();
+  const nowTime = Date.now();
+  tasks.forEach((task) => {
+    if (!task.due_date) return;
+    const day = Math.round((startOfDay(new Date(task.due_date)).getTime() - timelineStart.getTime()) / DAY_MS);
+    if (day < 0 || day > Math.round((timelineEnd.getTime() - timelineStart.getTime()) / DAY_MS)) return;
+    const entry = byDay.get(day) ?? { count: 0, overdue: false };
+    entry.count += 1;
+    if (new Date(task.due_date).getTime() < nowTime && task.status !== "done" && task.status !== "cancelled") {
+      entry.overdue = true;
+    }
+    byDay.set(day, entry);
+  });
+
+  const lines: GraphNode[] = [];
+  byDay.forEach((entry, day) => {
+    lines.push({
+      id: `due-line-${day}`,
+      type: "dueLine",
+      position: { x: xForDate(new Date(timelineStart.getTime() + day * DAY_MS)), y: AXIS_Y },
+      data: { height: Math.max(maxNodeBottom - AXIS_Y + 30, 200), overdue: entry.overdue },
+      style: { width: 2, height: Math.max(maxNodeBottom - AXIS_Y + 30, 200), zIndex: 0 },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      deletable: false,
+    });
+  });
+  return lines;
 }
 
 /**
@@ -298,7 +352,11 @@ function calculateNodePositions(
       };
     });
 
-  return { nodes: [...axisNodes, ...taskNodes], edges: taskEdges, categoryGroups };
+  // Линии дедлайна: от оси вниз до самого нижнего узла
+  const maxNodeBottom = taskNodes.reduce((max, node) => Math.max(max, node.position.y + 190), 0);
+  const dueLines = buildDueLines(tasks, timelineStart, timelineEnd, xForDate, maxNodeBottom);
+
+  return { nodes: [...axisNodes, ...dueLines, ...taskNodes], edges: taskEdges, categoryGroups };
 }
 
 function TaskNode({ data }: NodeProps<TaskFlowNode>): JSX.Element {
@@ -340,7 +398,7 @@ function TaskNode({ data }: NodeProps<TaskFlowNode>): JSX.Element {
   );
 }
 
-const nodeTypes = { task: TaskNode, axisLine: AxisLineNode, axisTick: AxisTickNode };
+const nodeTypes = { task: TaskNode, axisLine: AxisLineNode, axisTick: AxisTickNode, dueLine: DueLineNode };
 
 /** Горизонтальная линия таймлайна в координатах графа. */
 function AxisLineNode({ data }: NodeProps): JSX.Element {
@@ -357,6 +415,12 @@ function AxisTickNode({ data }: NodeProps): JSX.Element {
       <span className="axis-tick__rule" />
     </div>
   );
+}
+
+/** Вертикальный «столбик» дедлайна: соединяет ось с карточкой задачи. */
+function DueLineNode({ data }: NodeProps): JSX.Element {
+  const { height, overdue } = data as unknown as DueLineData;
+  return <div className={`due-line ${overdue ? "due-line--overdue" : ""}`} style={{ height }} />;
 }
 
 export default function EventGraphPage() {
@@ -572,7 +636,7 @@ export default function EventGraphPage() {
             <div className="graph-overview__intro">
               <span className="graph-overview__eyebrow">Интерактивная сеть</span>
               <strong>План в контексте зависимостей</strong>
-              <span>Выберите узел справа, чтобы увидеть CPM-метрики.</span>
+              <span>Кликните по узлу или связи — карточка откроется поверх графа.</span>
             </div>
             <div className="graph-overview__metric">
               <span>Задачи</span>
@@ -644,9 +708,9 @@ export default function EventGraphPage() {
                   </div>
                 ))}
               </ReactFlow>
-            </div>
 
-            <div className="graph-detail-panel">
+              {(selectedEdgeDep || selected) && (
+              <div className="graph-detail-panel graph-detail-panel--floating">
               {selectedEdgeDep ? (
                 <div className="fade-in">
                   <div className="graph-detail-panel__heading">
@@ -766,14 +830,8 @@ export default function EventGraphPage() {
                     </Button>
                   </div>
                 </div>
-              ) : (
-                <div className="graph-empty-state">
-                  <div className="graph-empty-mark">+</div>
-                  <strong>Выберите задачу или связь</strong>
-                  <span>
-                    Клик по узлу — детали и CPM-метрики, клик по стрелке — управление связью. Чтобы задать зависимость, тяните от правого порта задачи к левому порту другой.
-                  </span>
-                </div>
+              ) : null}
+              </div>
               )}
             </div>
           </div>

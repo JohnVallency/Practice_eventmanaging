@@ -210,7 +210,8 @@ export default function TasksPage() {
   }, [location.pathname, id]);
 
   const workspace = useTaskWorkspace(id);
-  const { tasks, people, loading, busy, updateTask, createTask, deleteTask, duplicateTask } = workspace;
+  const { tasks, people, loading, busy, load, updateTask, createTask, deleteTask, duplicateTask } = workspace;
+  const { push } = useToast();
 
   const [query, setQuery] = useState("");
   const [priority, setPriority] = useState<TaskPriority | "all">("all");
@@ -279,6 +280,59 @@ export default function TasksPage() {
       setDrawerId(null);
     },
     [deleteTask],
+  );
+
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  /** Массовое изменение статуса выбранных задач + пересчёт плана. */
+  const handleBulkStatus = useCallback(
+    async (ids: string[], status: TaskStatus): Promise<void> => {
+      if (ids.length === 0) return;
+      setBulkBusy(true);
+      let changed = 0;
+      for (const taskId of ids) {
+        const task = tasks.find((item) => item.id === taskId);
+        if (!task || task.status === status) continue;
+        try {
+          await api.tasks.update(taskId, { status });
+          changed += 1;
+        } catch (error: unknown) {
+          push({ tone: "error", title: "Не удалось обновить задачу", message: describeError(error) });
+        }
+      }
+      if (changed > 0) {
+        await api.schedule.calculate(id ?? "").catch(() => undefined);
+        await load();
+        push({ tone: "ok", title: "Статус обновлён", message: `Задач изменено: ${changed}` });
+      }
+      setBulkBusy(false);
+    },
+    [id, load, push, tasks],
+  );
+
+  /** Массовое удаление выбранных задач + пересчёт плана. */
+  const handleBulkDelete = useCallback(
+    async (ids: string[]): Promise<void> => {
+      if (ids.length === 0) return;
+      if (!window.confirm(`Удалить выбранные задачи (${ids.length})?`)) return;
+      setBulkBusy(true);
+      let removed = 0;
+      for (const taskId of ids) {
+        try {
+          await api.tasks.delete(taskId);
+          removed += 1;
+        } catch (error: unknown) {
+          push({ tone: "error", title: "Не удалось удалить задачу", message: describeError(error) });
+        }
+      }
+      if (removed > 0) {
+        await api.schedule.calculate(id ?? "").catch(() => undefined);
+        await load();
+        push({ tone: "ok", title: "Задачи удалены", message: `Удалено: ${removed}` });
+      }
+      setBulkBusy(false);
+    },
+    [id, load, push],
   );
 
   const base = id ? `/events/${id}/tasks` : "/events";
@@ -388,6 +442,9 @@ export default function TasksPage() {
                 onStatus={handleStatus}
                 expanded={expanded}
                 onToggle={setExpanded}
+                bulkBusy={bulkBusy}
+                onBulkStatus={(ids, status) => void handleBulkStatus(ids, status)}
+                onBulkDelete={(ids) => void handleBulkDelete(ids)}
               />
             </>
           )}
@@ -431,9 +488,24 @@ function AllTasksView(props: {
   onStatus: (task: Task, status: TaskStatus) => void;
   expanded: Set<string>;
   onToggle: (updater: (current: Set<string>) => Set<string>) => void;
+  bulkBusy: boolean;
+  onBulkStatus: (ids: string[], status: TaskStatus) => void;
+  onBulkDelete: (ids: string[]) => void;
 }): JSX.Element {
-  const { tasks, childrenOf, counts, onOpen, onStatus, expanded, onToggle } = props;
+  const { tasks, childrenOf, counts, onOpen, onStatus, expanded, onToggle, bulkBusy, onBulkStatus, onBulkDelete } = props;
   const roots = tasks.filter((task) => !task.parent_id);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const toggleSelect = (taskId: string): void =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+
+  const allSelected = roots.length > 0 && roots.every((task) => selected.has(task.id));
+  const selectedIds = Array.from(selected);
 
   if (roots.length === 0) {
     return (
@@ -446,20 +518,61 @@ function AllTasksView(props: {
   }
 
   return (
-    <div className="task-list">
-      {roots.map((task) => (
-        <TaskRow
-          key={task.id}
-          task={task}
-          children={childrenOf(task.id)}
-          dependencyCount={counts.get(task.id) ?? 0}
-          onOpen={onOpen}
-          onStatus={onStatus}
-          expanded={expanded.has(task.id)}
-          onToggle={() => toggleIn(task.id, expanded, onToggle)}
-        />
-      ))}
-    </div>
+    <>
+      <div className={`task-bulk-bar ${selected.size > 0 ? "task-bulk-bar--active" : ""}`}>
+        <label className="task-bulk-bar__select-all">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={() =>
+              setSelected(allSelected ? new Set() : new Set(roots.map((task) => task.id)))
+            }
+          />
+          Выбрать все
+        </label>
+        {selected.size > 0 && (
+          <div className="task-bulk-bar__actions">
+            <span className="task-bulk-bar__count">Выбрано: {selected.size}</span>
+            <select
+              disabled={bulkBusy}
+              value=""
+              onChange={(event) => {
+                const status = event.target.value as TaskStatus | "";
+                if (!status) return;
+                onBulkStatus(selectedIds, status);
+                setSelected(new Set());
+              }}
+            >
+              <option value="" disabled>Изменить статус…</option>
+              {(Object.keys(STATUS_LABELS) as TaskStatus[]).map((status) => (
+                <option key={status} value={status}>{STATUS_LABELS[status]}</option>
+              ))}
+            </select>
+            <Button variant="danger" disabled={bulkBusy} onClick={() => { onBulkDelete(selectedIds); setSelected(new Set()); }}>
+              <FiTrash2 /> Удалить
+            </Button>
+            <Button variant="ghost" disabled={bulkBusy} onClick={() => setSelected(new Set())}>
+              Снять выделение
+            </Button>
+          </div>
+        )}
+      </div>
+      <div className="task-list">
+        {roots.map((task) => (
+          <TaskRow
+            key={task.id}
+            task={task}
+            children={childrenOf(task.id)}
+            dependencyCount={counts.get(task.id) ?? 0}
+            onOpen={onOpen}
+            onStatus={onStatus}
+            expanded={expanded.has(task.id)}
+            onToggle={() => toggleIn(task.id, expanded, onToggle)}
+            selection={{ selected: selected.has(task.id), onToggle: () => toggleSelect(task.id) }}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -562,19 +675,30 @@ function TaskRow(props: {
   onStatus: (task: Task, status: TaskStatus) => void;
   expanded: boolean;
   onToggle: () => void;
+  selection?: { selected: boolean; onToggle: () => void };
 }): JSX.Element {
-  const { task, children, dependencyCount, onOpen, onStatus, expanded, onToggle } = props;
+  const { task, children, dependencyCount, onOpen, onStatus, expanded, onToggle, selection } = props;
   const tone = deadlineTone(task);
   const doneChildren = children.filter((child) => child.status === "done").length;
 
   return (
     <article
-      className={`task-row task-row--${task.priority} ${task.status === "done" ? "task-row--done" : ""}`}
+      className={`task-row task-row--${task.priority} ${task.status === "done" ? "task-row--done" : ""} ${selection?.selected ? "task-row--selected" : ""}`}
       onClick={() => onOpen(task.id)}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => { if (event.key === "Enter") onOpen(task.id); }}
     >
+      {selection && (
+        <input
+          type="checkbox"
+          className="task-row__check"
+          checked={selection.selected}
+          onClick={(event) => event.stopPropagation()}
+          onChange={() => selection.onToggle()}
+          aria-label="Выбрать задачу"
+        />
+      )}
       <span className={`priority-dot priority-dot--${task.priority}`} />
       <div className="task-row__main">
         <div className="task-row__title">
