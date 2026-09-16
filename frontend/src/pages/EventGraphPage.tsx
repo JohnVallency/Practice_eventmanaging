@@ -81,8 +81,8 @@ function formatDueDate(value: string | null): string {
 /** День в миллисекундах, масштаб оси и её вертикальное смещение над узлами. */
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
-/** Широкий шаг между днями: один день = 60px на оси. */
-const PX_PER_DAY = 60;
+/** Широкий шаг между днями: один день = 180px на оси — место для часовых подписей. */
+const PX_PER_DAY = 180;
 const AXIS_X0 = 150;
 const AXIS_Y = -120;
 /** Ось охватывает: (сегодня − 7 дней) … (дата мероприятия + 7 дней). */
@@ -90,7 +90,7 @@ const AXIS_PAD_BEFORE_DAYS = 7;
 const AXIS_PAD_AFTER_DAYS = 7;
 const AXIS_MIN_SPAN_DAYS = 21;
 /** При такой экранной ширине дня на оси появляются часовые отметки со временем. */
-const AXIS_HOURS_THRESHOLD_PX = 110;
+const AXIS_HOURS_THRESHOLD_PX = 140;
 
 function startOfDay(value: Date): Date {
   const copy = new Date(value);
@@ -171,8 +171,9 @@ function buildAxisNodes(
   const showHours = pxPerDay >= AXIS_HOURS_THRESHOLD_PX;
   const seenTicks = new Set<string>();
 
-  /** Добавляет тик; hour === 0 трактуется как дневная отметка (полночь = новый день). */
-  const pushTick = (day: number, hour: number | null): void => {
+  /** Добавляет тик; hour === 0 трактуется как дневная отметка (полночь = новый день).
+   *  Часовые тики подписываются интервалом «12:00–14:00» по шагу часовой сетки. */
+  const pushTick = (day: number, hour: number | null, hourStep = 0): void => {
     if (hour === 0) hour = null;
     const key = `${day}:${hour ?? "day"}`;
     if (seenTicks.has(key)) return;
@@ -181,20 +182,21 @@ function buildAxisNodes(
     const tickDate = new Date(timelineStart.getTime() + day * DAY_MS + (hour ?? 0) * HOUR_MS);
     const isEvent = Boolean(eventEnd) && day === totalDays && hour === null;
     const kind: AxisTickData["kind"] = day === 0 && hour === null ? "start" : isEvent ? "event" : hour === null ? "tick" : "hour";
+    const label = isEvent
+      ? `Мероприятие · ${formatDateShort(eventEnd as Date)}`
+      : day === 0 && hour === null
+        ? `Сегодня · ${formatDateShort(tickDate)}`
+        : hour === null
+          ? formatDateShort(tickDate)
+          : `${formatTimeShort(tickDate)}–${formatTimeShort(new Date(tickDate.getTime() + hourStep * HOUR_MS))}`;
     axisNodes.push({
       id: `axis-tick-${kind}-${day}${hour !== null ? `-${hour}h` : ""}`,
       type: "axisTick",
       position: { x: AXIS_X0 + day * PX_PER_DAY + (hour ?? 0) * (PX_PER_DAY / 24), y: AXIS_Y },
-      data: {
-        label: isEvent
-          ? `Мероприятие · ${formatDateShort(eventEnd as Date)}`
-          : day === 0 && hour === null
-            ? `Сегодня · ${formatDateShort(tickDate)}`
-            : hour === null
-              ? formatDateShort(tickDate)
-              : formatTimeShort(tickDate),
-        kind,
-      },
+        data: {
+          label,
+          kind,
+        },
       style: { width: 2, height: 16, zIndex: 0, pointerEvents: "none" },
       draggable: false,
       selectable: false,
@@ -211,14 +213,14 @@ function buildAxisNodes(
       pushTick(day, null);
     }
   } else {
-    // Часовой режим: при увеличении на оси появляется время
+    // Часовой режим: при увеличении появляются интервалы «12:00–14:00»
     const pxPerHour = pxPerDay / 24;
     const hourSteps = [1, 2, 3, 6, 12];
-    const stepHours = hourSteps.find((step) => step * pxPerHour >= 45) ?? 12;
+    const stepHours = hourSteps.find((step) => step * pxPerHour >= 90) ?? 12;
     const firstHour = Math.max(0, firstDay * 24);
     const lastHour = Math.min(totalDays * 24, (lastDay + 1) * 24);
     for (let hour = Math.ceil(firstHour / stepHours) * stepHours; hour <= lastHour; hour += stepHours) {
-      pushTick(Math.floor(hour / 24), hour % 24);
+      pushTick(Math.floor(hour / 24), hour % 24, stepHours);
     }
   }
 
