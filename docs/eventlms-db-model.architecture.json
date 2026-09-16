@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Модель данных EventLMS",
+    "output": "eventlms-db-model.html",
+    "quality_profile": "showcase",
+    "viewBox": [1240, 740],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "database": { "label": "Таблицы" }
+      }
+    }
+  },
+  "components": [
+    {
+      "id": "expenses",
+      "type": "database",
+      "label": "expenses",
+      "sublabel": "расход события",
+      "pos": [160, 200],
+      "size": [150, 56]
+    },
+    {
+      "id": "venues",
+      "type": "database",
+      "label": "venues",
+      "sublabel": "площадка · координаты",
+      "pos": [500, 200],
+      "size": [150, 56]
+    },
+    {
+      "id": "notifications",
+      "type": "database",
+      "label": "notifications",
+      "sublabel": "уведомления",
+      "pos": [760, 200],
+      "size": [160, 56]
+    },
+    {
+      "id": "events",
+      "type": "database",
+      "label": "events",
+      "sublabel": "событие · корень",
+      "pos": [500, 330],
+      "size": [150, 64]
+    },
+    {
+      "id": "resources",
+      "type": "database",
+      "label": "resources",
+      "sublabel": "human · equipment · venue",
+      "pos": [140, 460],
+      "size": [150, 56]
+    },
+    {
+      "id": "tasks",
+      "type": "database",
+      "label": "tasks",
+      "sublabel": "задача · CPM/RCPSP",
+      "pos": [500, 460],
+      "size": [150, 64]
+    },
+    {
+      "id": "task_dependencies",
+      "type": "database",
+      "label": "task_dependencies",
+      "sublabel": "FS · SS · FF · SF",
+      "pos": [880, 460],
+      "size": [190, 64]
+    },
+    {
+      "id": "assignments",
+      "type": "database",
+      "label": "assignments",
+      "sublabel": "units_allocated > 0",
+      "pos": [500, 600],
+      "size": [150, 56]
+    },
+    {
+      "id": "task_comments",
+      "type": "database",
+      "label": "task_comments",
+      "sublabel": "комментарии",
+      "pos": [700, 600],
+      "size": [150, 56]
+    },
+    {
+      "id": "task_history",
+      "type": "database",
+      "label": "task_history",
+      "sublabel": "история изменений",
+      "pos": [900, 600],
+      "size": [180, 56]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "PostgreSQL 16 · БД eventlms",
+      "wraps": [
+        "expenses",
+        "venues",
+        "notifications",
+        "events",
+        "tasks",
+        "task_dependencies",
+        "resources",
+        "assignments",
+        "task_comments",
+        "task_history"
+      ],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "venues-events",
+      "from": "venues",
+      "to": "events",
+      "label": "event_id",
+      "labelAt": [575, 270]
+    },
+    {
+      "id": "expenses-events",
+      "from": "expenses",
+      "to": "events",
+      "label": "event_id",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "notifications-events",
+      "from": "notifications",
+      "to": "events",
+      "label": "event_id",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "id": "events-tasks",
+      "from": "events",
+      "to": "tasks",
+      "label": "event_id",
+      "labelAt": [575, 408],
+      "variant": "emphasis"
+    },
+    {
+      "id": "events-resources",
+      "from": "events",
+      "to": "resources",
+      "label": "event_id",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "tasks-dependencies",
+      "from": "tasks",
+      "to": "task_dependencies",
+      "label": "2×FK · M:N",
+      "variant": "emphasis"
+    },
+    {
+      "id": "tasks-assignments",
+      "from": "tasks",
+      "to": "assignments",
+      "label": "task_id",
+      "labelAt": [575, 580]
+    },
+    {
+      "id": "tasks-comments",
+      "from": "tasks",
+      "to": "task_comments",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "tasks-history",
+      "from": "tasks",
+      "to": "task_history",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "resources-assignments",
+      "from": "resources",
+      "to": "assignments",
+      "label": "resource_id",
+      "fromSide": "bottom",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ключи и целостность",
+      "items": [
+        "PK — UUID: gen_random_uuid() (PostgreSQL 16)",
+        "Все FK — ON DELETE CASCADE",
+        "Составной PK в task_dependencies · self-FK parent_id"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Расчёт CPM в tasks",
+      "items": [
+        "earliest_/latest_start/finish — проходы CPM",
+        "actual_start/finish — даты после RCPSP",
+        "total_float, free_float, is_critical"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Native ENUM",
+      "items": [
+        "event_status: draft / active / completed / archived",
+        "resource_type: human / equipment / venue",
+        "dependency_type: FS / SS / FF / SF"
+      ]
+    }
+  ]
+}
