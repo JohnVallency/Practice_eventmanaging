@@ -17,16 +17,35 @@ import "@xyflow/react/dist/style.css";
 
 import { api } from "../services/api";
 import { describeError } from "../services/errors";
-import type { Task, TaskDependency } from "../types";
+import type { Task, TaskDependency, Event } from "../types";
 import { Badge, Button, EmptyState, Skeleton, Spinner, useToast } from "../components/ui";
 
 interface TaskNodeData extends Record<string, unknown> {
   task: Task;
   selected: boolean;
   onSelect: (taskId: string) => void;
+  category?: string | null;
 }
 
 type TaskFlowNode = Node<TaskNodeData, "task">;
+
+interface CategoryGroup {
+  id: string;
+  name: string;
+  color: string;
+  yStart: number;
+  yEnd: number;
+}
+
+/** Цвета категорий для группировки задач */
+const CATEGORY_COLORS: Record<string, string> = {
+  Музыка: "#7c3aed",
+  Свет: "#f59e0b",
+  Декор: "#10b981",
+  Кейтеринг: "#ef4444",
+  Логистика: "#3b82f6",
+  Безопасность: "#6b7280",
+};
 
 const STATUS_LABELS: Record<Task["status"], string> = {
   todo: "Не начата",
@@ -58,29 +77,128 @@ function formatDueDate(value: string | null): string {
     : "Без дедлайна";
 }
 
-function getLayers(tasks: Task[], dependencies: TaskDependency[]): Map<string, number> {
-  const predecessors = new Map<string, string[]>();
-  const taskIds = new Set(tasks.map((task) => task.id));
-  for (const dependency of dependencies) {
-    if (!taskIds.has(dependency.predecessor_id) || !taskIds.has(dependency.successor_id)) continue;
-    const values = predecessors.get(dependency.successor_id) ?? [];
-    values.push(dependency.predecessor_id);
-    predecessors.set(dependency.successor_id, values);
+/** Вычисляет позицию узла на основе временной шкалы и категории */
+function calculateNodePositions(
+  tasks: Task[],
+  dependencies: TaskDependency[],
+  event: Event | null,
+  selectedId: string | null,
+): { nodes: TaskFlowNode[]; edges: Edge[]; categoryGroups: CategoryGroup[] } {
+  if (tasks.length === 0) return { nodes: [], edges: [], categoryGroups: [] };
+
+  // Группируем задачи по категориям
+  const byCategory = new Map<string | null, Task[]>();
+  tasks.forEach((task) => {
+    const category = task.category ?? null;
+    byCategory.set(category, [...(byCategory.get(category) ?? []), task]);
+  });
+
+  // Определяем временные границы
+  const allEarliestStarts = tasks.map((t) => t.earliest_start).filter((s): s is number => s !== null);
+  const allEarliestFinishes = tasks.map((t) => t.earliest_finish).filter((f): f is number => f !== null);
+  
+  let minTime = 0;
+  let maxTime = 0;
+  
+  if (allEarliestStarts.length > 0) {
+    minTime = Math.min(...allEarliestStarts);
   }
-  const cache = new Map<string, number>();
-  const visiting = new Set<string>();
-  const layerOf = (taskId: string): number => {
-    const cached = cache.get(taskId);
-    if (cached !== undefined) return cached;
-    if (visiting.has(taskId)) return 0;
-    visiting.add(taskId);
-    const layer = Math.max(0, ...(predecessors.get(taskId) ?? []).map((id) => layerOf(id) + 1));
-    visiting.delete(taskId);
-    cache.set(taskId, layer);
-    return layer;
-  };
-  tasks.forEach((task) => layerOf(task.id));
-  return cache;
+  if (allEarliestFinishes.length > 0) {
+    maxTime = Math.max(...allEarliestFinishes);
+  }
+  if (event?.end_date) {
+    const endDate = new Date(event.end_date).getTime();
+    const startDate = event.start_date ? new Date(event.start_date).getTime() : endDate;
+    const durationDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+    maxTime = Math.max(maxTime, durationDays);
+  }
+  
+  const timeRange = maxTime - minTime || 1;
+  const categories = Array.from(byCategory.keys());
+  const categoryHeight = 220;
+  const verticalSpacing = 60;
+
+  const taskNodes: TaskFlowNode[] = [];
+  const categoryGroups: CategoryGroup[] = [];
+  
+  categories.forEach((category, catIndex) => {
+    const categoryTasks = byCategory.get(category) ?? [];
+    
+    // Сортируем задачи по времени внутри категории
+    categoryTasks.sort((a, b) => {
+      const aTime = a.earliest_start ?? a.earliest_finish ?? 0;
+      const bTime = b.earliest_start ?? b.earliest_finish ?? 0;
+      return aTime - bTime;
+    });
+    
+    const yStart = catIndex * (categoryHeight + verticalSpacing) - 30;
+    
+    // Сохраняем информацию о группе категории для отрисовки фона
+    if (category) {
+      categoryGroups.push({
+        id: `cat-${category}`,
+        name: category,
+        color: CATEGORY_COLORS[category] ?? "#c6b9a2",
+        yStart,
+        yEnd: yStart + categoryHeight + (categoryTasks.length - 1) * 170 + 60,
+      });
+    }
+    
+    categoryTasks.forEach((task, taskIndex) => {
+      // Позиция X основана на времени (earliest_start)
+      const taskTime = task.earliest_start ?? task.earliest_finish ?? 0;
+      const normalizedTime = (taskTime - minTime) / timeRange;
+      const x = normalizedTime * 1100 + 150; // Масштабируем на ширину графа
+      
+      // Позиция Y основана на категории и индексе задачи
+      const y = yStart + 30 + taskIndex * 170;
+      
+      taskNodes.push({
+        id: task.id,
+        type: "task",
+        position: { x, y },
+        data: { 
+          task, 
+          selected: task.id === selectedId, 
+          onSelect: () => {},
+          category: task.category,
+        },
+        style: {
+          borderColor: category ? CATEGORY_COLORS[category] ?? "#c6b9a2" : undefined,
+        },
+      });
+    });
+  });
+
+  // Создаем ребра
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const taskEdges: Edge[] = dependencies
+    .filter(
+      (dependency) =>
+        taskIds.has(dependency.predecessor_id) && taskIds.has(dependency.successor_id),
+    )
+    .map((dependency) => {
+      const critical =
+        tasks.find((task) => task.id === dependency.predecessor_id)?.is_critical &&
+        tasks.find((task) => task.id === dependency.successor_id)?.is_critical;
+      const stroke = critical ? EDGE_CRITICAL : EDGE_NEUTRAL;
+      return {
+        id: `${dependency.predecessor_id}::${dependency.successor_id}`,
+        source: dependency.predecessor_id,
+        target: dependency.successor_id,
+        type: "smoothstep",
+        label:
+          dependency.dependency_type === "FS" && dependency.lag_days === 0
+            ? undefined
+            : `${dependency.dependency_type} +${dependency.lag_days}`,
+        labelStyle: { fill: "#877c6d", fontSize: 11, fontWeight: 600 },
+        labelBgStyle: { fill: "#faf5ec", fillOpacity: 0.95 },
+        style: { stroke, strokeWidth: critical ? 2.5 : 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+      };
+    });
+
+  return { nodes: taskNodes, edges: taskEdges, categoryGroups };
 }
 
 function TaskNode({ data }: NodeProps<TaskFlowNode>): JSX.Element {
@@ -131,12 +249,14 @@ export default function EventGraphPage() {
   const pushRef = useRef(push);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [deps, setDeps] = useState<TaskDependency[]>([]);
+  const [event, setEvent] = useState<Event | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [calcBusy, setCalcBusy] = useState(false);
   const [nodes, setNodes] = useState<TaskFlowNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const [categoryGroups, setCategoryGroups] = useState<CategoryGroup[]>([]);
   /** Идентификатор выбранного ребра — открывает управление связью. */
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [depBusy, setDepBusy] = useState(false);
@@ -154,11 +274,15 @@ export default function EventGraphPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const taskData = await api.tasks.listAll(id);
+      const [taskData, eventData] = await Promise.all([
+        api.tasks.listAll(id),
+        api.events.get(id).catch(() => null),
+      ]);
       const dependencyLists = await Promise.all(
         taskData.map((task) => api.dependencies.list(task.id).catch(() => [])),
       );
       setTasks(taskData);
+      setEvent(eventData);
       setDeps(dependencyLists.flat());
     } catch (error: unknown) {
       const message = describeError(error);
@@ -174,60 +298,15 @@ export default function EventGraphPage() {
   }, [load]);
 
   const graphModel = useMemo(() => {
-    if (tasks.length === 0) return { nodes: [] as TaskFlowNode[], edges: [] as Edge[] };
-    const layers = getLayers(tasks, deps);
-    const byLayer = new Map<number, Task[]>();
-    tasks.forEach((task) => {
-      const layer = layers.get(task.id) ?? 0;
-      byLayer.set(layer, [...(byLayer.get(layer) ?? []), task]);
-    });
-    const taskNodes: TaskFlowNode[] = [];
-    [...byLayer.entries()]
-      .sort(([left], [right]) => left - right)
-      .forEach(([layer, layerTasks]) => {
-        layerTasks
-          .sort((left, right) => left.name.localeCompare(right.name))
-          .forEach((task, index) => {
-            taskNodes.push({
-              id: task.id,
-              type: "task",
-              position: { x: layer * 360, y: index * 170 },
-              data: { task, selected: task.id === selectedId, onSelect: setSelectedId },
-            });
-          });
-      });
-    const taskIds = new Set(tasks.map((task) => task.id));
-    const taskEdges: Edge[] = deps
-      .filter(
-        (dependency) =>
-          taskIds.has(dependency.predecessor_id) && taskIds.has(dependency.successor_id),
-      )
-      .map((dependency) => {
-        const critical =
-          tasks.find((task) => task.id === dependency.predecessor_id)?.is_critical &&
-          tasks.find((task) => task.id === dependency.successor_id)?.is_critical;
-        const stroke = critical ? EDGE_CRITICAL : EDGE_NEUTRAL;
-        return {
-          id: `${dependency.predecessor_id}::${dependency.successor_id}`,
-          source: dependency.predecessor_id,
-          target: dependency.successor_id,
-          type: "smoothstep",
-          label:
-            dependency.dependency_type === "FS" && dependency.lag_days === 0
-              ? undefined
-              : `${dependency.dependency_type} +${dependency.lag_days}`,
-          labelStyle: { fill: "#877c6d", fontSize: 11, fontWeight: 600 },
-          labelBgStyle: { fill: "#faf5ec", fillOpacity: 0.95 },
-          style: { stroke, strokeWidth: critical ? 2.5 : 1.5 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
-        };
-      });
-    return { nodes: taskNodes, edges: taskEdges };
-  }, [deps, selectedId, tasks]);
+    if (tasks.length === 0) return { nodes: [] as TaskFlowNode[], edges: [] as Edge[], categoryGroups: [] as CategoryGroup[] };
+    // Используем новую функцию для расчета позиций на основе времени и категорий
+    return calculateNodePositions(tasks, deps, event, selectedId);
+  }, [deps, event, selectedId, tasks]);
 
   useEffect(() => {
     setNodes(graphModel.nodes);
     setEdges(graphModel.edges);
+    setCategoryGroups(graphModel.categoryGroups);
   }, [graphModel]);
 
   const selected = useMemo(
@@ -424,6 +503,30 @@ export default function EventGraphPage() {
                   nodeColor={(node) => STATUS_COLORS[(node.data as TaskNodeData).task.status]}
                   maskColor={CANVAS_MASK}
                 />
+                {/* Временная шкала */}
+                <div className="timeline-axis">
+                  <span className="timeline-axis__start">Начало</span>
+                  <span className="timeline-axis__end">{event?.end_date ? new Date(event.end_date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : 'Дата мероприятия'}</span>
+                </div>
+                {/* Фоны категорий */}
+                {categoryGroups.map((group) => (
+                  <div
+                    key={group.id}
+                    className="category-band"
+                    style={{
+                      top: `${group.yStart}px`,
+                      height: `${group.yEnd - group.yStart}px`,
+                      backgroundColor: group.color,
+                    }}
+                  >
+                    <span 
+                      className="category-band__label"
+                      style={{ borderColor: group.color, color: group.color }}
+                    >
+                      {group.name}
+                    </span>
+                  </div>
+                ))}
               </ReactFlow>
             </div>
 
