@@ -379,10 +379,9 @@ strong {
   transition: transform var(--transition-fast);
 }
 
-.sidebar__group-toggle--closed {
-  transform: rotate(-90deg);
-}
-
+/* Поворачивается только шеврон (правило ниже), сам заголовок раздела
+   остаётся горизонтальным — иначе вся строка «Задачи/Планирование»
+   ложится на бок при свёрнутой группе. */
 .sidebar__group-items {
   display: grid;
   gap: 2px;
