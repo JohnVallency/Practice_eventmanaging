@@ -1,4 +1,3 @@
-```
 # Build artifacts
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
@@ -47,4 +46,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
-```
+
+# Скриншоты и временные артефакты инструментария
+.shots/
+frontend/shots/
+docs/.archify-delivery-*/
