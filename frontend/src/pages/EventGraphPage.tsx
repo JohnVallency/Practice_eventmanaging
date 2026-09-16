@@ -13,6 +13,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -81,8 +82,8 @@ function formatDueDate(value: string | null): string {
 /** День в миллисекундах, масштаб оси и её вертикальное смещение над узлами. */
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
-/** Широкий шаг между днями: один день = 180px на оси — место для часовых подписей. */
-const PX_PER_DAY = 180;
+/** Максимально широкий шаг между днями: один день = 480px — места хватает на часовые подписи. */
+const PX_PER_DAY = 480;
 const AXIS_X0 = 150;
 const AXIS_Y = -120;
 /** Ось охватывает: (сегодня − 7 дней) … (дата мероприятия + 7 дней). */
@@ -90,7 +91,9 @@ const AXIS_PAD_BEFORE_DAYS = 7;
 const AXIS_PAD_AFTER_DAYS = 7;
 const AXIS_MIN_SPAN_DAYS = 21;
 /** При такой экранной ширине дня на оси появляются часовые отметки со временем. */
-const AXIS_HOURS_THRESHOLD_PX = 140;
+const AXIS_HOURS_THRESHOLD_PX = 240;
+/** Минимальная экранная ширина одного временного интервала, чтобы подпись «12:00–14:00» влезла. */
+const AXIS_HOUR_LABEL_MIN_PX = 70;
 
 function startOfDay(value: Date): Date {
   const copy = new Date(value);
@@ -113,6 +116,8 @@ interface AxisLineData extends Record<string, unknown> {
 interface AxisTickData extends Record<string, unknown> {
   label: string;
   kind: "start" | "tick" | "event" | "hour";
+  /** Мелкая насечка без подписи: все дни размечены, подписи включаются при увеличении. */
+  minor?: boolean;
 }
 
 interface DueLineData extends Record<string, unknown> {
@@ -134,13 +139,12 @@ type GraphNode =
  * а шаг тиков подстраивается под масштаб (запас ±500px не даёт линии «дышать» при пане).
  */
 function buildAxisNodes(
-  timelineStart: Date,
-  totalDays: number,
-  eventEnd: Date | null,
+  timeline: AxisModel,
   viewLeftX: number,
   viewRightX: number,
   zoom: number,
 ): GraphNode[] {
+  const { start: timelineStart, totalDays, eventEnd, todayIndex, eventIndex } = timeline;
   const timelineRightX = AXIS_X0 + Math.max(totalDays, 1) * PX_PER_DAY;
 
   // Линия оси: от левого края окна до правого (в координатах графа)
@@ -169,54 +173,76 @@ function buildAxisNodes(
 
   const pxPerDay = PX_PER_DAY * zoom;
   const showHours = pxPerDay >= AXIS_HOURS_THRESHOLD_PX;
-  const seenTicks = new Set<string>();
+  /** Ключ тика → позиция в массиве: позволяет «повысить» мелкую насечку до подписи. */
+  const tickIndex = new Map<string, number>();
 
-  /** Добавляет тик; hour === 0 трактуется как дневная отметка (полночь = новый день).
-   *  Часовые тики подписываются интервалом «12:00–14:00» по шагу часовой сетки. */
-  const pushTick = (day: number, hour: number | null, hourStep = 0): void => {
-    if (hour === 0) hour = null;
-    const key = `${day}:${hour ?? "day"}`;
-    if (seenTicks.has(key)) return;
-    seenTicks.add(key);
-
+  /** Считает подпись и тип отметки для конкретного дня/часа. */
+  const buildTickMeta = (day: number, hour: number | null, hourStep: number): Pick<AxisTickData, "label" | "kind"> => {
     const tickDate = new Date(timelineStart.getTime() + day * DAY_MS + (hour ?? 0) * HOUR_MS);
-    const isEvent = Boolean(eventEnd) && day === totalDays && hour === null;
-    const kind: AxisTickData["kind"] = day === 0 && hour === null ? "start" : isEvent ? "event" : hour === null ? "tick" : "hour";
+    const isEvent = eventIndex !== null && day === eventIndex && hour === null;
+    const isToday = day === todayIndex && hour === null;
+    const kind: AxisTickData["kind"] =
+      isToday ? "start" : isEvent ? "event" : hour === null ? "tick" : "hour";
     const label = isEvent
       ? `Мероприятие · ${formatDateShort(eventEnd as Date)}`
-      : day === 0 && hour === null
+      : isToday
         ? `Сегодня · ${formatDateShort(tickDate)}`
         : hour === null
           ? formatDateShort(tickDate)
           : `${formatTimeShort(tickDate)}–${formatTimeShort(new Date(tickDate.getTime() + hourStep * HOUR_MS))}`;
-    axisNodes.push({
-      id: `axis-tick-${kind}-${day}${hour !== null ? `-${hour}h` : ""}`,
+    return { label, kind };
+  };
+
+  /** Собирает узел отметки оси: насечку без подписи либо подписанный тик. */
+  const buildTickNode = (day: number, hour: number | null, hourStep: number, labeled: boolean): GraphNode => {
+    const meta = buildTickMeta(day, hour, hourStep);
+    return {
+      id: `axis-tick-${meta.kind}-${day}${hour !== null ? `-${hour}h` : ""}`,
       type: "axisTick",
       position: { x: AXIS_X0 + day * PX_PER_DAY + (hour ?? 0) * (PX_PER_DAY / 24), y: AXIS_Y },
-        data: {
-          label,
-          kind,
-        },
+      data: { ...meta, minor: !labeled },
       style: { width: 2, height: 16, zIndex: 0, pointerEvents: "none" },
       draggable: false,
       selectable: false,
       connectable: false,
       deletable: false,
-    });
+    };
   };
 
-  if (!showHours) {
-    // Дневной режим: шаг подстраивается под зум; при 50+px на день подписываются все дни подряд
-    const stepCandidates = [1, 2, 3, 7, 14, 30, 60, 90, 180, 365];
-    const stepDays = stepCandidates.find((step) => step * pxPerDay >= 50) ?? 365;
-    for (let day = Math.ceil(firstDay / stepDays) * stepDays; day <= lastDay; day += stepDays) {
-      pushTick(day, null);
+  /** Добавляет тик; hour === 0 трактуется как дневная отметка (полночь = новый день).
+   *  Часовые тики подписываются интервалом «12:00–14:00» по шагу часовой сетки.
+   *  labeled === false — насечка без подписи (день размечен, но подпись не влезает).
+   *  Повторный вызов с labeled === true «повышает» уже стоящую насечку до подписи. */
+  const pushTick = (day: number, hour: number | null, hourStep = 0, labeled = true): void => {
+    if (hour === 0) hour = null;
+    const key = `${day}:${hour ?? "day"}`;
+    const existing = tickIndex.get(key);
+    if (existing !== undefined) {
+      if (!labeled) return;
+      const prevData = axisNodes[existing].data as unknown as AxisTickData;
+      if (!prevData.minor) return;
+      axisNodes[existing] = buildTickNode(day, hour, hourStep, true);
+      return;
     }
-  } else {
-    // Часовой режим: при увеличении появляются интервалы «12:00–14:00»
+
+    tickIndex.set(key, axisNodes.length);
+    axisNodes.push(buildTickNode(day, hour, hourStep, labeled));
+  };
+
+  // Дневная разметка присутствует всегда: каждый день диапазона получает насечку,
+  // подпись — только если день достаточно широкий на экране
+  const stepCandidates = [1, 2, 3, 7, 14, 30, 60, 90, 180, 365];
+  const labelStep = stepCandidates.find((step) => step * pxPerDay >= 50) ?? 365;
+  const minorStep = stepCandidates.find((step) => step * pxPerDay >= 6) ?? 365;
+  for (let day = Math.ceil(firstDay / minorStep) * minorStep; day <= lastDay; day += minorStep) {
+    pushTick(day, null, 0, day % labelStep === 0);
+  }
+
+  if (showHours) {
+    // Часовой режим: чем крупнее масштаб, тем мельче интервал — вплоть до часа
     const pxPerHour = pxPerDay / 24;
-    const hourSteps = [1, 2, 3, 6, 12];
-    const stepHours = hourSteps.find((step) => step * pxPerHour >= 90) ?? 12;
+    const hourSteps = [1, 2, 3, 4, 6, 8, 12];
+    const stepHours = hourSteps.find((step) => step * pxPerHour >= AXIS_HOUR_LABEL_MIN_PX) ?? 12;
     const firstHour = Math.max(0, firstDay * 24);
     const lastHour = Math.min(totalDays * 24, (lastDay + 1) * 24);
     for (let hour = Math.ceil(firstHour / stepHours) * stepHours; hour <= lastHour; hour += stepHours) {
@@ -224,9 +250,9 @@ function buildAxisNodes(
     }
   }
 
-  // Ключевые отметки — всегда, независимо от шага
-  pushTick(0, null); // «Сегодня»
-  if (eventEnd) pushTick(totalDays, null); // Дата мероприятия
+  // Ключевые отметки — всегда, независимо от шага: «Сегодня» и дата мероприятия
+  pushTick(todayIndex, null);
+  if (eventIndex !== null) pushTick(eventIndex, null);
 
   return axisNodes;
 }
@@ -277,6 +303,10 @@ interface AxisModel {
   start: Date;
   totalDays: number;
   eventEnd: Date | null;
+  /** Индекс дня «сегодня» на оси (0 — начало диапазона, а не сегодня). */
+  todayIndex: number;
+  /** Индекс дня мероприятия на оси (может быть null, если дата не задана). */
+  eventIndex: number | null;
 }
 
 interface GraphModel {
@@ -328,6 +358,11 @@ function calculateNodePositions(
     1,
     Math.round((timelineEnd.getTime() - timelineStart.getTime()) / DAY_MS),
   );
+  /** Индексы дня «сегодня» и дня мероприятия — от начала диапазона оси. */
+  const todayIndex = Math.round((now.getTime() - timelineStart.getTime()) / DAY_MS);
+  const eventIndex = eventEnd
+    ? Math.round((eventEnd.getTime() - timelineStart.getTime()) / DAY_MS)
+    : null;
   const xForDate = (date: Date): number => {
     const days = (date.getTime() - timelineStart.getTime()) / DAY_MS;
     return AXIS_X0 + days * PX_PER_DAY;
@@ -341,8 +376,8 @@ function calculateNodePositions(
   });
 
   const categories = Array.from(byCategory.keys());
-  const categoryHeight = 220;
-  const verticalSpacing = 60;
+  const categoryHeight = 200;
+  const verticalSpacing = 56;
 
   const taskNodes: TaskFlowNode[] = [];
   const categoryGroups: CategoryGroup[] = [];
@@ -366,7 +401,7 @@ function calculateNodePositions(
         name: category,
         color: CATEGORY_COLORS[category] ?? "#c6b9a2",
         yStart,
-        yEnd: yStart + categoryHeight + (categoryTasks.length - 1) * 170 + 60,
+        yEnd: yStart + categoryHeight + (categoryTasks.length - 1) * 150 + 50,
       });
     }
     
@@ -376,7 +411,7 @@ function calculateNodePositions(
       const x = xForDate(taskDate);
       
       // Позиция Y основана на категории и индексе задачи
-      const y = yStart + 30 + taskIndex * 170;
+      const y = yStart + 30 + taskIndex * 150;
       
       // Задачи всегда рисуются поверх рёбер (zIndex: 10) — стрелки не «окутывают» карточки
   taskNodes.push({
@@ -427,7 +462,7 @@ function calculateNodePositions(
     });
 
   // Линии дедлайна: от оси вниз до самого нижнего узла
-  const maxNodeBottom = taskNodes.reduce((max, node) => Math.max(max, node.position.y + 190), 0);
+  const maxNodeBottom = taskNodes.reduce((max, node) => Math.max(max, node.position.y + 160), 0);
   const dueLines = buildDueLines(tasks, timelineStart, timelineEnd, xForDate, maxNodeBottom);
 
   return {
@@ -435,7 +470,7 @@ function calculateNodePositions(
     dueLineNodes: dueLines,
     edges: taskEdges,
     categoryGroups,
-    timeline: { start: timelineStart, totalDays, eventEnd },
+    timeline: { start: timelineStart, totalDays, eventEnd, todayIndex, eventIndex },
   };
 }
 
@@ -486,12 +521,12 @@ function AxisLineNode({ data }: NodeProps): JSX.Element {
   return <div className="axis-line" style={{ width }} />;
 }
 
-/** Отметка даты на оси: обычный тик, «сегодня» или маркер даты мероприятия. */
+/** Отметка даты на оси: обычный тик, «сегодня», маркер мероприятия или мелкая насечка. */
 function AxisTickNode({ data }: NodeProps): JSX.Element {
-  const { label, kind } = data as unknown as AxisTickData;
+  const { label, kind, minor } = data as unknown as AxisTickData;
   return (
-    <div className={`axis-tick axis-tick--${kind}`}>
-      <span className="axis-tick__label">{label}</span>
+    <div className={`axis-tick axis-tick--${kind} ${minor ? "axis-tick--minor" : ""}`}>
+      {minor ? null : <span className="axis-tick__label">{label}</span>}
       <span className="axis-tick__rule" />
     </div>
   );
@@ -543,6 +578,10 @@ export default function EventGraphPage() {
   /** Ширина окна графа — ось тянется от его левого до правого края. */
   const [flowPanel, setFlowPanel] = useState<HTMLDivElement | null>(null);
   const [flowWidth, setFlowWidth] = useState(1200);
+  /** Экземпляр графа: нужен для программного центрирования вида на «сегодня». */
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
+  /** Стартовый фокус выполняется один раз — при появлении задач и границ оси. */
+  const initialFocusDone = useRef(false);
 
   useEffect(() => {
     if (!flowPanel) return;
@@ -605,7 +644,7 @@ export default function EventGraphPage() {
     if (!timeline) return [] as GraphNode[];
     const viewLeftX = -viewport.x / viewport.zoom;
     const viewRightX = (flowWidth - viewport.x) / viewport.zoom;
-    return buildAxisNodes(timeline.start, timeline.totalDays, timeline.eventEnd, viewLeftX, viewRightX, viewport.zoom);
+    return buildAxisNodes(timeline, viewLeftX, viewRightX, viewport.zoom);
   }, [flowWidth, graphModel, viewport]);
 
   useEffect(() => {
@@ -618,6 +657,29 @@ export default function EventGraphPage() {
     () => tasks.find((task) => task.id === selectedId) ?? null,
     [selectedId, tasks],
   );
+
+  /** Центрирует вид на конкретном дне оси: показываем окно примерно в 7 дней. */
+  const focusOnDay = useCallback(
+    (dayIndex: number): void => {
+      if (!flowInstance) return;
+      const centerX = AXIS_X0 + dayIndex * PX_PER_DAY + PX_PER_DAY / 2;
+      const zoom = Math.min(Math.max(flowWidth / (PX_PER_DAY * 7), 0.05), 1.2);
+      void flowInstance.setCenter(centerX, 0, { zoom, duration: 500 });
+    },
+    [flowInstance, flowWidth],
+  );
+
+  /** Один раз при открытии графа ставим вид на «сегодня» — иначе 480px/день нечитаемы целиком. */
+  useEffect(() => {
+    if (!flowInstance || !graphModel.timeline || initialFocusDone.current) return;
+    initialFocusDone.current = true;
+    focusOnDay(graphModel.timeline.todayIndex);
+  }, [flowInstance, focusOnDay, graphModel.timeline]);
+
+  /** При переходе к другому событию фокус на «сегодня» выполняется заново. */
+  useEffect(() => {
+    initialFocusDone.current = false;
+  }, [id]);
 
   const recalculate = async (): Promise<void> => {
     if (!id) return;
@@ -728,6 +790,11 @@ export default function EventGraphPage() {
               "Обновить план"
             )}
           </Button>
+          {graphModel.timeline && (
+            <Button variant="ghost" onClick={() => focusOnDay(graphModel.timeline?.todayIndex ?? 0)}>
+              К сегодня
+            </Button>
+          )}
         </div>
       </div>
 
@@ -798,10 +865,9 @@ export default function EventGraphPage() {
                   setSelectedEdgeId(null);
                 }}
                 onConnect={(connection) => void handleConnect(connection)}
-                fitView
-                fitViewOptions={{ padding: 0.2, minZoom: 0.35, maxZoom: 1.35 }}
-                minZoom={0.2}
-                maxZoom={2}
+                onInit={setFlowInstance}
+                minZoom={0.05}
+                maxZoom={5}
                 elevateEdgesOnSelect
                 proOptions={{ hideAttribution: true }}
               >

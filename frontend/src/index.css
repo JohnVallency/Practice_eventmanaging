@@ -2287,9 +2287,9 @@ textarea.field__input {
 
 .flow-task-node {
   position: relative;
-  width: 250px;
-  min-height: 124px;
-  padding: 12px 14px;
+  width: 218px;
+  min-height: 104px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -2328,7 +2328,7 @@ textarea.field__input {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .flow-task-node__status-label {
@@ -2353,11 +2353,11 @@ textarea.field__input {
 
 .flow-task-node__title {
   display: block;
-  max-width: 212px;
+  max-width: 190px;
   font-family: var(--font-display);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.28;
   letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
@@ -2366,12 +2366,12 @@ textarea.field__input {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  margin-top: 16px;
-  padding-top: 11px;
+  margin-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--line-soft);
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   letter-spacing: 0.06em;
 }
 
@@ -2379,9 +2379,9 @@ textarea.field__input {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 6px;
   color: var(--ink-2);
-  font-size: 11px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3801,11 +3801,11 @@ textarea.field__input {
   }
 
   .flow-task-node {
-    width: 220px;
+    width: 200px;
   }
 
   .flow-task-node__title {
-    max-width: 184px;
+    max-width: 168px;
   }
 
   .tasks-toolbar__count {
@@ -4892,6 +4892,13 @@ body[data-density="compact"] .stat-card__value {
   background: var(--line-strong);
 }
 
+/* Мелкая насечка: день размечен всегда, но подписи нет (не хватает места) */
+.axis-tick--minor .axis-tick__rule {
+  top: 17px;
+  height: 5px;
+  background: rgba(148, 132, 108, 0.45);
+}
+
 .axis-tick--start .axis-tick__label {
   color: var(--accent);
   font-weight: 600;
@@ -4912,9 +4919,10 @@ body[data-density="compact"] .stat-card__value {
   background: #a32817;
 }
 
-/* Часовые отметки: появляются при увеличении масштаба, подпись со временем */
+/* Часовые отметки: появляются при увеличении масштаба, подпись — интервал «12:00–14:00» */
 .axis-tick--hour .axis-tick__label {
   top: -18px;
+  transform: none;
   font-size: 8px;
   letter-spacing: 0.04em;
   color: var(--ink-2);
